@@ -370,16 +370,19 @@ serve(async (req: Request) => {
         }
 
         // Backfill legacy table for consistency
-        await serviceClient
-          .from('master_super_admins')
-          .upsert([{
-            id: createdUser.id,
-            email,
-            password_hash: password,
-            name,
-            role,
-          }], { onConflict: 'email' })
-          .catch(() => {});
+        try {
+          await serviceClient
+            .from('master_super_admins')
+            .upsert([{
+              id: createdUser.id,
+              email,
+              password_hash: password,
+              name,
+              role,
+            }], { onConflict: 'email' });
+        } catch (e) {
+          console.warn('master_super_admins backfill notice:', e);
+        }
 
         return jsonResponse({
           success: true,
@@ -416,7 +419,11 @@ serve(async (req: Request) => {
         if (delErr) throw delErr;
 
         // Also clean up legacy table if present
-        await serviceClient.from('master_super_admins').delete().eq('id', adminId).catch(() => {});
+        try {
+          await serviceClient.from('master_super_admins').delete().eq('id', adminId);
+        } catch (e) {
+          console.warn('master_super_admins delete notice:', e);
+        }
 
         return jsonResponse({ success: true, message: 'Administrator account deleted.' });
       }

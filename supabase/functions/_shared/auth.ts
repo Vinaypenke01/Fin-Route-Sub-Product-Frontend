@@ -95,10 +95,13 @@ export async function verifySuperAdmin(req: Request): Promise<VerifiedSuperAdmin
     if (legacyAdmin?.role) {
       role = legacyAdmin.role;
       // Auto-backfill into user_roles
-      await serviceClient
-        .from('user_roles')
-        .insert([{ user_id: user.id, role: legacyAdmin.role }])
-        .catch(() => {});
+      try {
+        await serviceClient
+          .from('user_roles')
+          .insert([{ user_id: user.id, role: legacyAdmin.role }]);
+      } catch (e) {
+        console.warn('user_roles backfill notice:', e);
+      }
     }
   }
 

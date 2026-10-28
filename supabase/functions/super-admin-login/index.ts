@@ -75,10 +75,13 @@ serve(async (req: Request) => {
 
         if (!createErr && created?.user) {
           // Link in public.user_roles
-          await serviceClient
-            .from('user_roles')
-            .upsert([{ user_id: created.user.id, role: 'superadmin' }], { onConflict: 'user_id' })
-            .catch(() => {});
+          try {
+            await serviceClient
+              .from('user_roles')
+              .upsert([{ user_id: created.user.id, role: 'superadmin' }], { onConflict: 'user_id' });
+          } catch (e) {
+            console.warn('user_roles link notice:', e);
+          }
 
           // Retry authentication with fresh native GoTrue identities
           authResult = await anonClient.auth.signInWithPassword({
@@ -120,10 +123,13 @@ serve(async (req: Request) => {
       if (legacyAdmin?.role === 'superadmin' || email === 'admin@finroute.com') {
         role = 'superadmin';
         // Auto-provision role mapping
-        await serviceClient
-          .from('user_roles')
-          .upsert([{ user_id: user.id, role: 'superadmin' }], { onConflict: 'user_id' })
-          .catch(() => {});
+        try {
+          await serviceClient
+            .from('user_roles')
+            .upsert([{ user_id: user.id, role: 'superadmin' }], { onConflict: 'user_id' });
+        } catch (e) {
+          console.warn('user_roles auto-provision notice:', e);
+        }
       }
     }
 
