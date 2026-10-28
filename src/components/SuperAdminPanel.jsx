@@ -54,7 +54,7 @@ import {
 } from '../services/masterAuthService';
 import SuperAdminModals from './SuperAdminModals';
 
-const masterUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_MASTER_SUPABASE_URL) || 'https://ubhwoicsjmxslggltvaa.supabase.co';
+const masterUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_MASTER_SUPABASE_URL) || '';
 
 export default function SuperAdminPanel({ onBackToApp }) {
   const [adminSession, setAdminSession] = useState(null);

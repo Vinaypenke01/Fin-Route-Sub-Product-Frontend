@@ -224,7 +224,7 @@ BEGIN
         VALUES (v_t2_id, 'lakshmi@gmail.com', 'Lakshmi#999');
 
         INSERT INTO master_db_configs (tenant_id, tenant_supabase_url, tenant_anon_key)
-        VALUES (v_t2_id, 'https://ubhwoicsjmxslggltvaa.supabase.co', 'sb_publishable_raPNiMJx4rlabjgq3VGQAw_HSKpJ0P5');
+        VALUES (v_t2_id, 'https://your-tenant-project.supabase.co', 'your_tenant_anon_key_placeholder');
     END IF;
 END $$;
 

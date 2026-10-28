@@ -2,6 +2,9 @@
   publish = "dist"
   command = "npm run build"
 
+[build.environment]
+  SECRETS_SCAN_OMIT_KEYS = "VITE_MASTER_SUPABASE_ANON_KEY,VITE_MASTER_SUPABASE_URL,VITE_GOOGLE_SHEET_URL"
+
 [[redirects]]
   from = "/*"
   to = "/index.html"

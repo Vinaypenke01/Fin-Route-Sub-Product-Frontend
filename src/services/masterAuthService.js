@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 
-const masterUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_MASTER_SUPABASE_URL) || 'https://ubhwoicsjmxslggltvaa.supabase.co';
-const masterAnonKey = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_MASTER_SUPABASE_ANON_KEY) || 'sb_publishable_raPNiMJx4rlabjgq3VGQAw_HSKpJ0P5';
+const masterUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_MASTER_SUPABASE_URL) || '';
+const masterAnonKey = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_MASTER_SUPABASE_ANON_KEY) || '';
 
 // Master client configured with persistent auth session for Super-Admin
 export const masterSupabase = createClient(masterUrl, masterAnonKey, {
