@@ -312,6 +312,8 @@ serve(async (req: Request) => {
         }
 
         // 1. Create user in Supabase Auth with auto-confirmed email
+        let createdUser: any = null;
+
         const { data: newAuthUser, error: authCreateErr } = await serviceClient.auth.admin.createUser({
           email,
           password,
@@ -326,18 +328,42 @@ serve(async (req: Request) => {
         });
 
         if (authCreateErr || !newAuthUser?.user) {
-          throw new Error(authCreateErr?.message || 'Failed to create user in Supabase Auth.');
+          const errMsg = authCreateErr?.message || '';
+          // If already in auth.users, adopt and promote user to admin with the new password
+          if (errMsg.toLowerCase().includes('already') || errMsg.toLowerCase().includes('registered') || errMsg.toLowerCase().includes('exists')) {
+            const { data: userList } = await serviceClient.auth.admin.listUsers({ perPage: 1000 });
+            const existing = userList?.users?.find((u: { email?: string; id: string }) => u.email?.toLowerCase() === email);
+
+            if (existing) {
+              const { data: updated, error: updateErr } = await serviceClient.auth.admin.updateUserById(existing.id, {
+                password,
+                email_confirm: true,
+                user_metadata: { name, role },
+                app_metadata: { role },
+              });
+
+              if (updateErr) {
+                throw new Error(updateErr.message || 'Failed to update existing user in Supabase Auth.');
+              }
+
+              createdUser = updated.user;
+            } else {
+              throw new Error(authCreateErr?.message || 'A user with this email address has already been registered in Supabase Auth.');
+            }
+          } else {
+            throw new Error(authCreateErr?.message || 'Failed to create user in Supabase Auth.');
+          }
+        } else {
+          createdUser = newAuthUser.user;
         }
 
-        const createdUser = newAuthUser.user;
-
-        // 2. Insert into protected public.user_roles mapping
+        // 2. Insert or update protected public.user_roles mapping
         const { error: roleInsertErr } = await serviceClient
           .from('user_roles')
-          .insert([{
+          .upsert([{
             user_id: createdUser.id,
             role: role === 'admin' ? 'admin' : 'superadmin',
-          }]);
+          }], { onConflict: 'user_id' });
 
         if (roleInsertErr) {
           console.error('user_roles insert error:', roleInsertErr);
