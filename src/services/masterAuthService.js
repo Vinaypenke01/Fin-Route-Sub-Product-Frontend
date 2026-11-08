@@ -847,3 +847,25 @@ export async function deleteSuperAdmin(adminId, currentEmail) {
     return { success: false, message: err.message };
   }
 }
+
+/**
+ * Super-Admin: Ping and wake up all tenant databases & master database (Heartbeat & Keep-Alive).
+ * Routes through the authenticated 'admin-tenants' Edge Function or 'keep-alive'.
+ */
+export async function pingAllTenantDatabases() {
+  try {
+    const res = await invokeAdminEdgeFunction('admin-tenants', 'ping_all_tenants', {});
+    if (res?.success) {
+      return res;
+    }
+    // Fallback: direct invoke keep-alive function
+    const { data, error } = await masterSupabase.functions.invoke('keep-alive', {});
+    if (!error && data?.success) {
+      return data;
+    }
+    return { success: false, message: res?.message || error?.message || 'Failed to ping databases' };
+  } catch (err) {
+    console.warn('pingAllTenantDatabases notice:', err);
+    return { success: false, message: err.message || 'Error triggering database heartbeat' };
+  }
+}

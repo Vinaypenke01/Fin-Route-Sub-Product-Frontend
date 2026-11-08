@@ -542,6 +542,142 @@ serve(async (req: Request) => {
         return jsonResponse({ success: true, logs: combined });
       }
 
+      // ------------------------------------------------------------------------
+      // 11. PING ALL TENANT DATABASES (KEEP-ALIVE & HEALTH CHECK)
+      // ------------------------------------------------------------------------
+      case 'ping_all_tenants': {
+        const masterStart = performance.now();
+        const { data: tenantRows, error: masterErr } = await serviceClient
+          .from('master_tenants')
+          .select(`
+            id,
+            client_name,
+            business_name,
+            email,
+            status,
+            master_db_configs (
+              tenant_supabase_url,
+              tenant_anon_key
+            )
+          `);
+
+        const masterLatency = Math.round(performance.now() - masterStart);
+        if (masterErr) throw masterErr;
+
+        const allTenants = tenantRows || [];
+        const pingPromises = allTenants.map(async (t: any) => {
+          const dbConfig = Array.isArray(t.master_db_configs) ? t.master_db_configs[0] : t.master_db_configs;
+          const dbUrl = (dbConfig?.tenant_supabase_url || '').trim();
+          const anonKey = (dbConfig?.tenant_anon_key || '').trim();
+          const tenantName = t.client_name || t.business_name || 'Tenant';
+
+          if (!dbUrl || !anonKey) {
+            return {
+              tenantId: t.id,
+              name: tenantName,
+              email: t.email,
+              dbUrl: '',
+              status: 'unconfigured',
+              latencyMs: null,
+              errorMessage: 'No dedicated database URL configured',
+            };
+          }
+
+          const tenantStart = performance.now();
+          try {
+            const tenantClient = createClient(dbUrl, anonKey, { auth: { persistSession: false } });
+            const pingPromise = Promise.race([
+              tenantClient.from('tenant_settings').select('id').limit(1),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('Connection timed out (>6000ms)')), 6000)),
+            ]);
+
+            const result: any = await pingPromise;
+            const latency = Math.round(performance.now() - tenantStart);
+
+            if (result?.error) {
+              const fallback = await tenantClient.from('weeks').select('id').limit(1);
+              if (fallback.error && !fallback.error.message.includes('42P01')) {
+                throw fallback.error;
+              }
+            }
+
+            return {
+              tenantId: t.id,
+              name: tenantName,
+              email: t.email,
+              dbUrl,
+              status: 'online',
+              latencyMs: latency,
+            };
+          } catch (err: any) {
+            const latency = Math.round(performance.now() - tenantStart);
+            const errMsg = String(err?.message || err);
+            const isSleeping = errMsg.includes('timed out') || errMsg.includes('503') || errMsg.includes('504') || errMsg.includes('Failed to fetch');
+
+            return {
+              tenantId: t.id,
+              name: tenantName,
+              email: t.email,
+              dbUrl,
+              status: isSleeping ? 'sleeping' : 'error',
+              latencyMs: latency,
+              errorMessage: errMsg,
+            };
+          }
+        });
+
+        const pingResults = await Promise.all(pingPromises);
+        const nowIso = new Date().toISOString();
+        const logRows: any[] = [];
+
+        for (const r of pingResults) {
+          logRows.push({
+            tenant_id: r.tenantId,
+            tenant_name: r.name,
+            tenant_email: r.email,
+            database_url: r.dbUrl,
+            status: r.status,
+            latency_ms: r.latencyMs,
+            error_message: r.errorMessage || null,
+            created_at: nowIso,
+          });
+
+          try {
+            await serviceClient
+              .from('master_tenants')
+              .update({
+                last_health_status: r.status,
+                last_latency_ms: r.latencyMs,
+                last_health_check_at: nowIso,
+              })
+              .eq('id', r.tenantId);
+          } catch (_) {}
+        }
+
+        if (logRows.length > 0) {
+          try {
+            await serviceClient.from('master_db_health_logs').insert(logRows);
+          } catch (_) {}
+        }
+
+        const onlineCount = pingResults.filter((r) => r.status === 'online').length;
+        const failedCount = pingResults.filter((r) => r.status === 'sleeping' || r.status === 'error').length;
+
+        return jsonResponse({
+          success: true,
+          message: `Heartbeat complete. ${onlineCount} online, ${failedCount} sleeping/failed.`,
+          timestamp: nowIso,
+          masterDb: { status: 'online', latencyMs: masterLatency },
+          summary: {
+            totalTenants: pingResults.length,
+            onlineCount,
+            failedCount,
+            unconfiguredCount: pingResults.filter((r) => r.status === 'unconfigured').length,
+          },
+          results: pingResults,
+        });
+      }
+
       default:
         return errorResponse(`Unsupported administration action: "${action}".`, 400);
     }

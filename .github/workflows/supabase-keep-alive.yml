@@ -1,0 +1,37 @@
+name: Supabase Keep-Alive & Database Health Heartbeat
+
+on:
+  schedule:
+    # Runs every 3 days at 04:00 UTC (prevents Supabase 7-day auto-pause on free tier)
+    - cron: '0 4 */3 * *'
+  workflow_dispatch: # Allows manual trigger anytime from GitHub Actions tab
+
+jobs:
+  ping-databases:
+    name: Ping Master & Tenant Databases
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send Keep-Alive Heartbeat to FinRoute Master Edge Function
+        run: |
+          echo "Sending keep-alive request to Master Edge Function..."
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            "https://ubhwoicsjmxslggltvaa.supabase.co/functions/v1/keep-alive" \
+            -H "apikey: sb_publishable_raPNiMJx4rlabjgq3VGQAw_HSKpJ0P5" \
+            -H "Content-Type: application/json")
+
+          HTTP_BODY=$(echo "$RESPONSE" | sed '$d')
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n 1)
+
+          echo "Response HTTP Status: $HTTP_CODE"
+          echo "Response Body:"
+          echo "$HTTP_BODY"
+
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            echo "Keep-alive heartbeat succeeded! All databases kept awake."
+            exit 0
+          else
+            echo "Keep-alive request failed with status $HTTP_CODE"
+            exit 1
+          fi
+

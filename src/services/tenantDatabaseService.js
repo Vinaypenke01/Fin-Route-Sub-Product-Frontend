@@ -53,24 +53,44 @@ export async function fetchTenantLedgerData(client) {
     paymentMap.get(p.customer_id)[p.week_id] = Number(p.amount) || 0;
   });
 
-  // Map customers with payments and formatting
-  const formattedCustomers = (customers || []).map((c, idx) => ({
-    id: c.id,
-    _rowId: `row-${c.id}-${idx}`,
-    name: c.name,
-    phone: c.phone || '',
-    disbursed: Number(c.disbursed) || 0,
-    originalAmount: Number(c.original_amount !== null ? c.original_amount : c.disbursed) || 0,
-    disbursedDate: c.disbursed_date ? String(c.disbursed_date).split('-').reverse().join('/') : '',
-    startWeekId: c.start_week_id || null,
-    isVillageDivider: Boolean(c.is_village_divider),
-    villageName: c.village_name || '',
-    villageId: c.village_id || null,
-    renewedAtWeek: c.renewed_at_week || null,
-    pastCyclePayments: c.past_cycle_payments || null,
-    isArchived: Boolean(c.is_archived),
-    payments: paymentMap.get(c.id) || {}
-  }));
+  // Map customers with payments and automatic hierarchical village resolution
+  let currentVilName = '';
+  let currentVilId = null;
+  const villageMap = new Map((villages || []).map(v => [v.name?.toLowerCase()?.trim(), v.id]));
+
+  const formattedCustomers = (customers || []).map((c, idx) => {
+    const isDivider = Boolean(c.is_village_divider);
+    if (isDivider) {
+      currentVilName = String(c.village_name || c.name || '')
+        .replace('📍 VILLAGE:', '')
+        .replace('VILLAGE:', '')
+        .trim();
+      currentVilId = c.village_id || villageMap.get(currentVilName.toLowerCase()) || `VIL-${idx + 1}`;
+    }
+
+    const resolvedVillageName = isDivider ? currentVilName : (c.village_name || currentVilName || '');
+    const resolvedVillageId = isDivider
+      ? currentVilId
+      : (c.village_id || (resolvedVillageName ? villageMap.get(resolvedVillageName.toLowerCase()) : null) || currentVilId || null);
+
+    return {
+      id: c.id,
+      _rowId: `row-${c.id}-${idx}`,
+      name: c.name,
+      phone: c.phone || '',
+      disbursed: Number(c.disbursed) || 0,
+      originalAmount: Number(c.original_amount !== null ? c.original_amount : c.disbursed) || 0,
+      disbursedDate: c.disbursed_date ? String(c.disbursed_date).split('-').reverse().join('/') : '',
+      startWeekId: c.start_week_id || null,
+      isVillageDivider: isDivider,
+      villageName: resolvedVillageName,
+      villageId: resolvedVillageId,
+      renewedAtWeek: c.renewed_at_week || null,
+      pastCyclePayments: c.past_cycle_payments || null,
+      isArchived: Boolean(c.is_archived),
+      payments: paymentMap.get(c.id) || {}
+    };
+  });
 
   // Map weeks
   const formattedWeeks = (weeks || []).map(w => ({
@@ -201,6 +221,34 @@ export async function addTenantCustomer(client, customer) {
     }
   }
 
+  let villageId = customer.villageId || customer.village_id || null;
+  const cleanVillageName = String(customer.villageName || customer.village_name || '')
+    .replace('📍 VILLAGE:', '')
+    .replace('VILLAGE:', '')
+    .trim();
+
+  // If villageId is missing but villageName exists, auto-resolve from villages table
+  if (!villageId && cleanVillageName) {
+    try {
+      const { data: vRow } = await client
+        .from('villages')
+        .select('id')
+        .ilike('name', cleanVillageName)
+        .limit(1)
+        .maybeSingle();
+
+      if (vRow?.id) {
+        villageId = vRow.id;
+      } else {
+        const newVilId = `VIL-${Date.now()}`;
+        await client.from('villages').insert([{ id: newVilId, name: cleanVillageName }]);
+        villageId = newVilId;
+      }
+    } catch (e) {
+      console.warn('Auto-resolve village_id notice:', e);
+    }
+  }
+
   const { data, error } = await client
     .from('customers')
     .insert([{
@@ -212,8 +260,8 @@ export async function addTenantCustomer(client, customer) {
       disbursed_date: formattedDate,
       start_week_id: customer.startWeekId || null,
       is_village_divider: Boolean(customer.isVillageDivider),
-      village_name: customer.villageName || '',
-      village_id: customer.villageId || null,
+      village_name: cleanVillageName,
+      village_id: villageId,
       row_order: customer.rowOrder || 9999
     }])
     .select()
@@ -495,17 +543,25 @@ export async function migrateSheetDataToTenantDb(client, { weeks = [], customers
   });
 
   const villageArray = Array.from(villageNames);
+  const villageNameToId = new Map();
   if (villageArray.length > 0) {
-    const villageRows = villageArray.map((name, idx) => ({
-      id: `VIL-${idx + 1}`,
-      name,
-      display_order: idx + 1
-    }));
+    const villageRows = villageArray.map((name, idx) => {
+      const id = `VIL-${idx + 1}`;
+      villageNameToId.set(name.toLowerCase().trim(), id);
+      return {
+        id,
+        name,
+        display_order: idx + 1
+      };
+    });
     await client.from('villages').upsert(villageRows, { onConflict: 'id' });
   }
 
-  // 3. Insert Customers
+  // 3. Insert Customers with Automatic Hierarchical Village Association
   const validCustomerIds = new Set();
+  let currentRouteVillageName = '';
+  let currentRouteVillageId = null;
+
   if (customers.length > 0) {
     const customerRows = customers.map((c, idx) => {
       let formattedDate = null;
@@ -520,6 +576,21 @@ export async function migrateSheetDataToTenantDb(client, { weeks = [], customers
       const custId = c.id || `CUST-${idx + 1}`;
       validCustomerIds.add(custId);
 
+      const isDivider = Boolean(c.isVillageDivider || c.is_village_divider);
+      if (isDivider) {
+        const vName = String(c.villageName || c.village_name || c.name || '')
+          .replace('📍 VILLAGE:', '')
+          .replace('VILLAGE:', '')
+          .trim();
+        currentRouteVillageName = vName;
+        currentRouteVillageId = villageNameToId.get(vName.toLowerCase().trim()) || `VIL-${idx + 1}`;
+      }
+
+      const rowVillageName = isDivider ? currentRouteVillageName : (c.villageName || c.village_name || currentRouteVillageName || '');
+      const rowVillageId = isDivider
+        ? currentRouteVillageId
+        : (c.village_id || c.villageId || (rowVillageName ? villageNameToId.get(rowVillageName.toLowerCase().trim()) : null) || currentRouteVillageId || null);
+
       return {
         id: custId,
         name: c.name || '',
@@ -529,8 +600,9 @@ export async function migrateSheetDataToTenantDb(client, { weeks = [], customers
         disbursed_date: formattedDate,
         start_week_id: c.startWeekId || c.start_week_id || null,
         row_order: Number(c.rowOrder || c.row_order || idx + 1),
-        is_village_divider: Boolean(c.isVillageDivider || c.is_village_divider),
-        village_name: c.villageName || c.village_name || '',
+        is_village_divider: isDivider,
+        village_name: rowVillageName,
+        village_id: rowVillageId,
         past_cycle_payments: c.pastCyclePayments || c.past_cycle_payments || null,
         renewed_at_week: c.renewedAtWeek || c.renewed_at_week || null,
         is_archived: Boolean(c.isArchived || c.is_archived)

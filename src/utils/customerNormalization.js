@@ -17,6 +17,9 @@ export function normalizeCustomers(list) {
   });
 
   const seenIds = new Set();
+  let currentVillage = '';
+  let currentVillageId = null;
+
   return deduplicated.map((c, idx) => {
     let cleanId = c.id;
     if (!cleanId || cleanId === 'CUST-' || seenIds.has(cleanId)) {
@@ -24,11 +27,32 @@ export function normalizeCustomers(list) {
     }
     seenIds.add(cleanId);
 
+    const isDivider = Boolean(
+      c.isVillageDivider ||
+      c.is_village_divider ||
+      (c.id && String(c.id).startsWith('VILLAGE-')) ||
+      (c.name && String(c.name).includes('VILLAGE:'))
+    );
+
+    if (isDivider) {
+      currentVillage = String(c.villageName || c.village_name || c.name || '')
+        .replace('📍 VILLAGE:', '')
+        .replace('VILLAGE:', '')
+        .trim();
+      currentVillageId = c.villageId || c.village_id || (c.id && !String(c.id).startsWith('CUST-') ? c.id : null) || `VIL-${idx + 1}`;
+    }
+
+    const resolvedVillageName = isDivider ? currentVillage : (c.villageName || c.village_name || currentVillage || '');
+    const resolvedVillageId = isDivider ? currentVillageId : (c.villageId || c.village_id || currentVillageId || null);
+
     return {
       ...c,
       id: cleanId,
       _rowId: c._rowId || `row-${idx}-${cleanId}-${Math.random().toString(36).slice(2, 7)}`,
       name: c.name || '',
+      isVillageDivider: isDivider,
+      villageName: resolvedVillageName,
+      villageId: resolvedVillageId,
       disbursed: Number(c.disbursed) || 0,
       originalAmount: (c.originalAmount !== undefined && c.originalAmount !== null && c.originalAmount !== '')
         ? Number(c.originalAmount)
@@ -38,7 +62,7 @@ export function normalizeCustomers(list) {
       startWeekId: c.startWeekId || null,
       renewedAtWeek: c.renewedAtWeek || null,
       pastCyclePayments: c.pastCyclePayments || null,
-      isArchived: Boolean(c.isArchived),
+      isArchived: Boolean(c.isArchived || c.is_archived),
       archivedAtWeek: c.archivedAtWeek || null,
       payments: c.payments || {}
     };

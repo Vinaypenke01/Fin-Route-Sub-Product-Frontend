@@ -50,7 +50,8 @@ import {
   fetchTenantStats,
   fetchSuperAdmins,
   createSuperAdmin,
-  deleteSuperAdmin
+  deleteSuperAdmin,
+  pingAllTenantDatabases
 } from '../services/masterAuthService';
 import SuperAdminModals from './SuperAdminModals';
 
@@ -68,6 +69,8 @@ export default function SuperAdminPanel({ onBackToApp }) {
   // Tenants Management
   const [tenants, setTenants] = useState([]);
   const [isFetchingTenants, setIsFetchingTenants] = useState(false);
+  const [isPingingAll, setIsPingingAll] = useState(false);
+  const [pingReport, setPingReport] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
 
@@ -174,6 +177,25 @@ export default function SuperAdminPanel({ onBackToApp }) {
       setTenants(res.data);
     }
     setIsFetchingTenants(false);
+  };
+
+  const handlePingAllDatabases = async () => {
+    setIsPingingAll(true);
+    setPingReport(null);
+    try {
+      const res = await pingAllTenantDatabases();
+      if (res?.success) {
+        setPingReport(res);
+        await loadTenants();
+        alert(`⚡ Keep-Alive Heartbeat Complete!\n\nMaster DB: ${res.masterDb?.status || 'online'} (${res.masterDb?.latencyMs || 0}ms)\nOnline Tenants: ${res.summary?.onlineCount || 0} / ${res.summary?.totalTenants || 0}\nSleeping / Failed: ${res.summary?.failedCount || 0}`);
+      } else {
+        alert('Keep-alive notice: ' + (res?.message || 'Failed to ping databases'));
+      }
+    } catch (e) {
+      alert('Error during heartbeat: ' + e.message);
+    } finally {
+      setIsPingingAll(false);
+    }
   };
 
   const loadAdmins = async () => {
@@ -841,6 +863,15 @@ export default function SuperAdminPanel({ onBackToApp }) {
 
           <div className="flex items-center gap-2">
             <button
+              onClick={handlePingAllDatabases}
+              disabled={isPingingAll}
+              className="px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 rounded-lg text-xs font-bold transition-all shadow-2xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              title="Ping and wake up all tenant databases to prevent Supabase 7-day auto-pause"
+            >
+              <Activity className={`w-3.5 h-3.5 text-emerald-600 ${isPingingAll ? 'animate-pulse' : ''}`} />
+              <span>{isPingingAll ? 'Pinging Databases...' : '⚡ Ping & Wake All DBs'}</span>
+            </button>
+            <button
               onClick={loadTenants}
               disabled={isFetchingTenants}
               className="p-2 bg-slate-50 border border-slate-200 hover:bg-slate-100 rounded-lg text-slate-600 transition-colors cursor-pointer"
@@ -926,11 +957,40 @@ export default function SuperAdminPanel({ onBackToApp }) {
                         </td>
                         <td className="px-4 py-3.5">
                           {hasDb ? (
-                            <div className="flex items-center gap-1.5 max-w-xs">
-                              <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span>
-                              <span className="font-mono text-[11px] text-slate-700 truncate" title={dbConfig.tenant_supabase_url}>
-                                {dbConfig.tenant_supabase_url}
-                              </span>
+                            <div className="flex flex-col gap-1 max-w-xs">
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-mono text-[11px] text-slate-700 truncate" title={dbConfig.tenant_supabase_url}>
+                                  {dbConfig.tenant_supabase_url}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                {t.last_health_status === 'online' ? (
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-2xs">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                    <span>Live ({t.last_latency_ms || 40}ms)</span>
+                                  </span>
+                                ) : t.last_health_status === 'sleeping' ? (
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-bold bg-red-50 text-red-700 border border-red-200 shadow-2xs">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                                    <span>Sleeping / Paused</span>
+                                  </span>
+                                ) : t.last_health_status === 'error' ? (
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 shadow-2xs">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                                    <span>Error</span>
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                                    <span>Configured</span>
+                                  </span>
+                                )}
+                                {t.last_health_check_at && (
+                                  <span className="text-[9.5px] text-slate-400 font-medium">
+                                    {new Date(t.last_health_check_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           ) : (
                             <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">

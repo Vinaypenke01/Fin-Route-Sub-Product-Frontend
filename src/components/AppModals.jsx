@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   AddCustomerModal,
+  AddVillageModal,
   CustomerRenewModal,
   AddWeekModal,
   ArchiveModal,
@@ -19,6 +20,10 @@ export default function AppModals({
   setVillageContext,
   handleAddCustomer,
   weeks,
+
+  // Add Village
+  isAddVillageOpen,
+  setIsAddVillageOpen,
 
   // Renew Customer
   isRenewModalOpen,
@@ -77,6 +82,12 @@ export default function AppModals({
         onAddCustomer={handleAddCustomer}
         villageContext={villageContext}
         weeks={weeks}
+      />
+
+      <AddVillageModal
+        isOpen={isAddVillageOpen}
+        onClose={() => setIsAddVillageOpen(false)}
+        onAddVillage={handleAddCustomer}
       />
 
       <CustomerRenewModal

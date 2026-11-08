@@ -222,6 +222,7 @@ export default function App() {
 
   // Modals state
   const [isAddCustomerOpen, setIsAddCustomerOpen] = useState(false);
+  const [isAddVillageOpen, setIsAddVillageOpen] = useState(false);
   const [isAddWeekOpen, setIsAddWeekOpen] = useState(false);
   const [isArchiveOpen, setIsArchiveOpen] = useState(false);
   const [isCloudSyncOpen, setIsCloudSyncOpen] = useState(false);
@@ -686,7 +687,9 @@ export default function App() {
       }
     }
 
-    if (insertUnderVillageRowId) {
+    if (newCust.insertAtBeginning) {
+      setCustomers(prev => [custWithUid, ...prev]);
+    } else if (insertUnderVillageRowId) {
       setCustomers(prev => {
         const vIdx = prev.findIndex(item => item._rowId === insertUnderVillageRowId);
         if (vIdx === -1) return [...prev, custWithUid];
@@ -1276,8 +1279,7 @@ export default function App() {
           setIsAddCustomerOpen(true);
         }}
         onOpenAddVillage={() => {
-          setVillageContext(null);
-          setIsAddCustomerOpen(true);
+          setIsAddVillageOpen(true);
         }}
         onOpenAddWeek={() => setIsAddWeekOpen(true)}
         onOpenDeleteWeek={handleOpenDeleteWeek}
@@ -1374,6 +1376,8 @@ export default function App() {
       <AppModals
         isAddCustomerOpen={isAddCustomerOpen}
         setIsAddCustomerOpen={setIsAddCustomerOpen}
+        isAddVillageOpen={isAddVillageOpen}
+        setIsAddVillageOpen={setIsAddVillageOpen}
         villageContext={villageContext}
         setVillageContext={setVillageContext}
         handleAddCustomer={handleAddCustomer}

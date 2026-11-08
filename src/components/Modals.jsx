@@ -24,11 +24,10 @@ function useModalAccessibility(isOpen, onClose) {
   }, [isOpen, onClose]);
 }
 
-// 1. ADD CUSTOMER OR VILLAGE DIVIDER MODAL
+// 1A. ADD CUSTOMER MODAL (Strictly dedicated to registering a customer loan)
 export function AddCustomerModal({ isOpen, onClose, onAddCustomer, villageContext = null, weeks = [] }) {
   useModalAccessibility(isOpen, onClose);
 
-  const [isDivider, setIsDivider] = useState(false);
   const [name, setName] = useState('');
   const [disbursed, setDisbursed] = useState('');
   const [originalAmount, setOriginalAmount] = useState('');
@@ -49,28 +48,21 @@ export function AddCustomerModal({ isOpen, onClose, onAddCustomer, villageContex
     e.preventDefault();
     if (!name.trim()) return;
 
-    if (isDivider) {
-      onAddCustomer({
-        id: `DIV-${Date.now()}`,
-        name: name.trim(),
-        villageName: name.trim(),
-        isVillageDivider: true
-      });
-    } else {
-      const numDisb = Number(disbursed) || 0;
-      const numOrig = originalAmount !== '' ? (Number(originalAmount) || 0) : numDisb;
-      const selectedStartWeek = startWeekId || weeks[weeks.length - 1]?.id || weeks[0]?.id || 'week_1';
-      onAddCustomer({
-        id: `CUST-${Math.floor(100 + Math.random() * 900)}`,
-        name: name.trim(),
-        disbursed: numDisb,
-        originalAmount: numOrig,
-        startWeekId: selectedStartWeek,
-        phone: phone.trim(),
-        disbursedDate: disbursedDate.trim(),
-        payments: {}
-      }, villageContext?.rowId || null);
-    }
+    const numDisb = Number(disbursed) || 0;
+    const numOrig = originalAmount !== '' ? (Number(originalAmount) || 0) : numDisb;
+    const selectedStartWeek = startWeekId || weeks[weeks.length - 1]?.id || weeks[0]?.id || 'week_1';
+
+    onAddCustomer({
+      id: `CUST-${Math.floor(100 + Math.random() * 900)}`,
+      name: name.trim(),
+      villageName: villageContext?.name || '',
+      disbursed: numDisb,
+      originalAmount: numOrig,
+      startWeekId: selectedStartWeek,
+      phone: phone.trim(),
+      disbursedDate: disbursedDate.trim(),
+      payments: {}
+    }, villageContext?.rowId || null);
 
     setName('');
     setDisbursed('');
@@ -97,14 +89,21 @@ export function AddCustomerModal({ isOpen, onClose, onAddCustomer, villageContex
         <div className="flex items-center justify-between pb-3 border-b border-slate-100">
           <div className="flex items-center gap-2">
             <UserPlus className="w-5 h-5 text-blue-600" />
-            <h3 className="font-bold text-slate-900 text-sm">
-              {villageContext ? `Add Customer Under: ${villageContext.name}` : 'Add New Customer / Village Divider'}
-            </h3>
+            <div>
+              <h3 className="font-bold text-slate-900 text-sm">
+                {villageContext ? `Add Customer Under: ${villageContext.name}` : 'Register New Customer'}
+              </h3>
+              {villageContext && (
+                <p className="text-[11px] text-indigo-600 font-semibold flex items-center gap-1 mt-0.5">
+                  <span>🏡</span> Assigned Village: <span>{villageContext.name}</span>
+                </p>
+              )}
+            </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
             title="Close (Esc)"
           >
             <X className="w-4 h-4" />
@@ -112,176 +111,283 @@ export function AddCustomerModal({ isOpen, onClose, onAddCustomer, villageContex
         </div>
 
         <form onSubmit={handleSubmit} className="mt-4 space-y-3.5">
-          {!villageContext && (
-            <div className="flex gap-4 p-2 bg-slate-50 rounded-lg text-xs font-semibold text-slate-700">
-              <label className="flex items-center gap-1.5 cursor-pointer">
-                <input
-                  type="radio"
-                  name="customerType"
-                  checked={!isDivider}
-                  onChange={() => setIsDivider(false)}
-                  className="text-blue-600 focus:ring-blue-500"
-                />
-                <span>Customer Loan</span>
-              </label>
-              <label className="flex items-center gap-1.5 cursor-pointer">
-                <input
-                  type="radio"
-                  name="customerType"
-                  checked={isDivider}
-                  onChange={() => setIsDivider(true)}
-                  className="text-blue-600 focus:ring-blue-500"
-                />
-                <span>Village Section Divider</span>
-              </label>
-            </div>
-          )}
-
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">
-              {isDivider ? 'Village / Area Name (తెలుగు / English)' : 'Customer Name (తెలుగు / English)'}
+              Customer Name (తెలుగు / English) *
             </label>
             <input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder={isDivider ? 'e.g. పొందూరు (Ponduru)' : 'e.g. రాముడు, లక్ష్మి...'}
+              placeholder="e.g. రాముడు, లక్ష్మి (Ramu, Lakshmi)..."
               required
               autoFocus
-              className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-telugu"
+              className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-telugu font-semibold"
             />
           </div>
 
-          {!isDivider && (
-            <>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Payable Amount (₹)
-                  </label>
-                  <input
-                    type="number"
-                    value={disbursed}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setDisbursed(val);
-                      if (!originalAmount || originalAmount === disbursed) {
-                        setOriginalAmount(val);
-                      }
-                    }}
-                    placeholder="e.g. 50000"
-                    required
-                    min="0"
-                    step="100"
-                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-semibold"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Original Amount (₹)
-                  </label>
-                  <input
-                    type="number"
-                    value={originalAmount}
-                    onChange={(e) => setOriginalAmount(e.target.value)}
-                    placeholder="e.g. 50000"
-                    min="0"
-                    step="100"
-                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-semibold"
-                    title="Original sanctioned capital amount"
-                  />
-                </div>
-              </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Payable Amount (₹) *
+              </label>
+              <input
+                type="number"
+                value={disbursed}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setDisbursed(val);
+                  if (!originalAmount || originalAmount === disbursed) {
+                    setOriginalAmount(val);
+                  }
+                }}
+                placeholder="e.g. 50000"
+                required
+                min="0"
+                step="100"
+                className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-semibold text-slate-900"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Original Capital (₹)
+              </label>
+              <input
+                type="number"
+                value={originalAmount}
+                onChange={(e) => setOriginalAmount(e.target.value)}
+                placeholder="e.g. 50000"
+                min="0"
+                step="100"
+                className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-semibold text-slate-900"
+                title="Original sanctioned capital amount"
+              />
+            </div>
+          </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Mobile Number (Optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    placeholder="e.g. 9876543210"
-                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Issue Date
-                  </label>
-                  <div className="relative flex items-center">
-                    <input
-                      ref={datePickerRef}
-                      type="date"
-                      value={toIsoDate(parseDate(disbursedDate)) || ''}
-                      onChange={handleNativeDateChange}
-                      className="sr-only"
-                      tabIndex={-1}
-                      aria-hidden="true"
-                    />
-                    <input
-                      type="text"
-                      value={disbursedDate}
-                      onChange={(e) => setDisbursedDate(e.target.value)}
-                      placeholder="DD-MM-YYYY"
-                      className="w-full px-3 py-2 pr-8 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        try {
-                          datePickerRef.current?.showPicker();
-                        } catch {
-                          datePickerRef.current?.focus();
-                        }
-                      }}
-                      className="absolute right-2 text-slate-400 hover:text-blue-600 text-xs p-1"
-                      title="Pick date from calendar"
-                    >
-                      📅
-                    </button>
-                  </div>
-                </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Mobile Number (Optional)
+              </label>
+              <input
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="e.g. 9876543210"
+                className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Issue Date
+              </label>
+              <div className="relative flex items-center">
+                <input
+                  ref={datePickerRef}
+                  type="date"
+                  value={toIsoDate(parseDate(disbursedDate)) || ''}
+                  onChange={handleNativeDateChange}
+                  className="sr-only"
+                  tabIndex={-1}
+                  aria-hidden="true"
+                />
+                <input
+                  type="text"
+                  value={disbursedDate}
+                  onChange={(e) => setDisbursedDate(e.target.value)}
+                  placeholder="DD-MM-YYYY"
+                  className="w-full px-3 py-2 pr-8 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    try {
+                      datePickerRef.current?.showPicker();
+                    } catch {
+                      datePickerRef.current?.focus();
+                    }
+                  }}
+                  className="absolute right-2 text-slate-400 hover:text-blue-600 text-xs p-1 cursor-pointer"
+                  title="Pick date from calendar"
+                >
+                  📅
+                </button>
               </div>
+            </div>
+          </div>
 
-              {weeks.length > 1 && (
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Joining / Start Week
-                  </label>
-                  <select
-                    value={startWeekId}
-                    onChange={(e) => setStartWeekId(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium bg-white"
-                  >
-                    {weeks.map(w => (
-                      <option key={w.id} value={w.id}>
-                        {w.label} ({w.date})
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-[11px] text-slate-500 mt-1">
-                    Selecting a later week will block previous week amount fields with shaded styling.
-                  </p>
-                </div>
-              )}
-            </>
+          {weeks.length > 1 && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Joining / Start Week
+              </label>
+              <select
+                value={startWeekId}
+                onChange={(e) => setStartWeekId(e.target.value)}
+                className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium bg-white cursor-pointer"
+              >
+                {weeks.map(w => (
+                  <option key={w.id} value={w.id}>
+                    {w.label} ({w.date})
+                  </option>
+                ))}
+              </select>
+            </div>
           )}
 
           <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
             <button
               type="button"
               onClick={onClose}
-              className="px-3.5 py-1.5 rounded-lg border border-slate-300 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
+              className="px-3.5 py-1.5 rounded-lg border border-slate-300 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-xs font-semibold text-white shadow-xs transition-colors"
+              className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-xs font-semibold text-white shadow-xs transition-colors cursor-pointer"
             >
-              {isDivider ? 'Add Village Divider' : 'Register Customer'}
+              Register Customer
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// 1B. ADD VILLAGE MODAL (Strictly dedicated to adding village section dividers)
+export function AddVillageModal({ isOpen, onClose, onAddVillage }) {
+  useModalAccessibility(isOpen, onClose);
+
+  const [villageName, setVillageName] = useState('');
+  const [position, setPosition] = useState('end'); // 'end' | 'start'
+
+  if (!isOpen) return null;
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    const cleanName = villageName.trim();
+    if (!cleanName) return;
+
+    onAddVillage({
+      id: `VILLAGE-${Date.now()}`,
+      name: cleanName,
+      villageName: cleanName,
+      isVillageDivider: true,
+      insertAtBeginning: position === 'start'
+    });
+
+    setVillageName('');
+    setPosition('end');
+    onClose();
+  };
+
+  return (
+    <div
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150"
+    >
+      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full p-6 transition-all animate-in zoom-in-95 duration-150">
+        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 flex items-center justify-center text-base">
+              🏡
+            </div>
+            <div>
+              <h3 className="font-bold text-slate-900 text-sm">Add Village Section Divider</h3>
+              <p className="text-[11px] text-slate-500 font-medium">
+                Groups customer records by village or route section in the ledger
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+            title="Close (Esc)"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              Village / Area Name (తెలుగు / English) *
+            </label>
+            <input
+              type="text"
+              value={villageName}
+              onChange={(e) => setVillageName(e.target.value)}
+              placeholder="e.g. కొవ్వూరు (Kovuru), రాంపూర్ (Rampur)..."
+              required
+              autoFocus
+              className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-telugu font-bold text-slate-900"
+            />
+            <p className="text-[11px] text-slate-500 mt-1">
+              This village name will automatically be assigned to all customers added under this section.
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              Divider Placement in Sheet
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <label
+                className={`flex items-center gap-2 p-2.5 rounded-lg border text-xs font-medium cursor-pointer transition-all ${
+                  position === 'end'
+                    ? 'border-indigo-500 bg-indigo-50/60 text-indigo-900 font-bold'
+                    : 'border-slate-200 hover:bg-slate-50 text-slate-700'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="position"
+                  value="end"
+                  checked={position === 'end'}
+                  onChange={() => setPosition('end')}
+                  className="text-indigo-600 focus:ring-indigo-500"
+                />
+                <span>At the End (Bottom)</span>
+              </label>
+
+              <label
+                className={`flex items-center gap-2 p-2.5 rounded-lg border text-xs font-medium cursor-pointer transition-all ${
+                  position === 'start'
+                    ? 'border-indigo-500 bg-indigo-50/60 text-indigo-900 font-bold'
+                    : 'border-slate-200 hover:bg-slate-50 text-slate-700'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="position"
+                  value="start"
+                  checked={position === 'start'}
+                  onChange={() => setPosition('start')}
+                  className="text-indigo-600 focus:ring-indigo-500"
+                />
+                <span>At Beginning (Top)</span>
+              </label>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-3.5 py-1.5 rounded-lg border border-slate-300 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-xs font-semibold text-white shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+            >
+              <span>🏡</span>
+              <span>Add Village Divider</span>
             </button>
           </div>
         </form>
