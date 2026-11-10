@@ -628,7 +628,19 @@ serve(async (req: Request) => {
 
         const pingResults = await Promise.all(pingPromises);
         const nowIso = new Date().toISOString();
-        const logRows: any[] = [];
+        const masterUrl = Deno.env.get('SUPABASE_URL') || '';
+        const logRows: any[] = [
+          {
+            tenant_id: null,
+            tenant_name: 'Master Database',
+            tenant_email: 'Central Registry',
+            database_url: masterUrl,
+            status: 'online',
+            latency_ms: masterLatency,
+            error_message: null,
+            created_at: nowIso,
+          }
+        ];
 
         for (const r of pingResults) {
           logRows.push({
@@ -676,6 +688,34 @@ serve(async (req: Request) => {
           },
           results: pingResults,
         });
+      }
+
+      // ------------------------------------------------------------------------
+      // 12. GET HEALTH & KEEP-ALIVE LOGS
+      // ------------------------------------------------------------------------
+      case 'get_health_logs': {
+        const limit = Number(payload?.limit) || 100;
+        const { data: logs, error: lErr } = await serviceClient
+          .from('master_db_health_logs')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(limit);
+
+        if (lErr) throw lErr;
+        return jsonResponse({ success: true, logs: logs || [] });
+      }
+
+      // ------------------------------------------------------------------------
+      // 13. CLEAR HEALTH LOGS
+      // ------------------------------------------------------------------------
+      case 'clear_health_logs': {
+        const { error: cErr } = await serviceClient
+          .from('master_db_health_logs')
+          .delete()
+          .neq('status', '___DO_NOT_MATCH___');
+
+        if (cErr) throw cErr;
+        return jsonResponse({ success: true, message: 'Health check logs cleared.' });
       }
 
       default:

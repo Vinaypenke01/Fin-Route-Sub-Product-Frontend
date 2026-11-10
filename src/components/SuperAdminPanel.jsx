@@ -51,9 +51,12 @@ import {
   fetchSuperAdmins,
   createSuperAdmin,
   deleteSuperAdmin,
-  pingAllTenantDatabases
+  pingAllTenantDatabases,
+  fetchMasterDbHealthLogs,
+  clearMasterDbHealthLogs
 } from '../services/masterAuthService';
 import SuperAdminModals from './SuperAdminModals';
+import SuperAdminHealthLogs from './SuperAdminHealthLogs';
 
 const masterUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_MASTER_SUPABASE_URL) || '';
 
@@ -145,6 +148,12 @@ export default function SuperAdminPanel({ onBackToApp }) {
   const [showNewAdminPassword, setShowNewAdminPassword] = useState(false);
   const [showAdminPassMap, setShowAdminPassMap] = useState({});
 
+  // Database Keep-Alive & Health Logs State
+  const [healthLogs, setHealthLogs] = useState([]);
+  const [isLoadingHealthLogs, setIsLoadingHealthLogs] = useState(false);
+  const [healthLogSearch, setHealthLogSearch] = useState('');
+  const [healthLogFilter, setHealthLogFilter] = useState('all'); // 'all' | 'online' | 'failed'
+
   // Check stored Supabase Auth admin session on mount
   useEffect(() => {
     getSuperAdminSession().then((session) => {
@@ -162,11 +171,12 @@ export default function SuperAdminPanel({ onBackToApp }) {
     });
   }, []);
 
-  // Fetch tenants and admins once logged in
+  // Fetch tenants, admins, and health logs once logged in
   useEffect(() => {
     if (adminSession) {
       loadTenants();
       loadAdmins();
+      loadHealthLogs();
     }
   }, [adminSession]);
 
@@ -179,6 +189,27 @@ export default function SuperAdminPanel({ onBackToApp }) {
     setIsFetchingTenants(false);
   };
 
+  const loadHealthLogs = async () => {
+    setIsLoadingHealthLogs(true);
+    const res = await fetchMasterDbHealthLogs(150);
+    if (res.success) {
+      setHealthLogs(res.logs || []);
+    }
+    setIsLoadingHealthLogs(false);
+  };
+
+  const handleClearHealthLogs = async () => {
+    if (!window.confirm('Are you sure you want to clear all historical database keep-alive logs?')) {
+      return;
+    }
+    const res = await clearMasterDbHealthLogs();
+    if (res.success) {
+      setHealthLogs([]);
+    } else {
+      alert('Failed to clear logs: ' + (res.message || 'Unknown error'));
+    }
+  };
+
   const handlePingAllDatabases = async () => {
     setIsPingingAll(true);
     setPingReport(null);
@@ -186,7 +217,7 @@ export default function SuperAdminPanel({ onBackToApp }) {
       const res = await pingAllTenantDatabases();
       if (res?.success) {
         setPingReport(res);
-        await loadTenants();
+        await Promise.all([loadTenants(), loadHealthLogs()]);
         alert(`⚡ Keep-Alive Heartbeat Complete!\n\nMaster DB: ${res.masterDb?.status || 'online'} (${res.masterDb?.latencyMs || 0}ms)\nOnline Tenants: ${res.summary?.onlineCount || 0} / ${res.summary?.totalTenants || 0}\nSleeping / Failed: ${res.summary?.failedCount || 0}`);
       } else {
         alert('Keep-alive notice: ' + (res?.message || 'Failed to ping databases'));
@@ -716,9 +747,9 @@ export default function SuperAdminPanel({ onBackToApp }) {
 
       {/* 2. Main Content */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
-        {/* Navigation Tabs: Tenants Directory vs Admin Configuration */}
+        {/* Navigation Tabs: Tenants Directory vs Admin Configuration vs Keep-Alive & Health Logs */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <button
               onClick={() => setActiveAdminTab('tenants')}
               className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
@@ -755,6 +786,26 @@ export default function SuperAdminPanel({ onBackToApp }) {
                 {adminsList.length}
               </span>
             </button>
+
+            <button
+              onClick={() => {
+                setActiveAdminTab('logs');
+                loadHealthLogs();
+              }}
+              className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
+                activeAdminTab === 'logs'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'bg-white text-slate-600 hover:text-slate-900 border border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <Activity className="w-4 h-4 text-emerald-500" />
+              <span>Keep-Alive & Health Logs</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                activeAdminTab === 'logs' ? 'bg-blue-700 text-white' : 'bg-slate-100 text-slate-600'
+              }`}>
+                {healthLogs.length}
+              </span>
+            </button>
           </div>
 
           {activeAdminTab === 'admins' && (
@@ -764,6 +815,17 @@ export default function SuperAdminPanel({ onBackToApp }) {
             >
               <UserPlus className="w-4 h-4" />
               <span>+ Add Administrator</span>
+            </button>
+          )}
+
+          {activeAdminTab === 'logs' && (
+            <button
+              onClick={handlePingAllDatabases}
+              disabled={isPingingAll}
+              className="px-4 py-2 text-xs font-bold text-white bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 rounded-lg shadow-sm transition-all flex items-center gap-1.5 cursor-pointer self-start sm:self-auto disabled:opacity-50"
+            >
+              <Zap className={`w-3.5 h-3.5 ${isPingingAll ? 'animate-spin' : ''}`} />
+              <span>{isPingingAll ? 'Pinging All...' : 'Ping & Wake All DBs'}</span>
             </button>
           )}
         </div>
@@ -1058,6 +1120,18 @@ export default function SuperAdminPanel({ onBackToApp }) {
           </div>
         </div>
       </>
+    ) : activeAdminTab === 'logs' ? (
+      /* Keep-Alive & Database Health Logs Section */
+      <SuperAdminHealthLogs
+        healthLogs={healthLogs}
+        isLoadingHealthLogs={isLoadingHealthLogs}
+        loadHealthLogs={loadHealthLogs}
+        handleClearHealthLogs={handleClearHealthLogs}
+        handlePingAllDatabases={handlePingAllDatabases}
+        isPingingAll={isPingingAll}
+        pingReport={pingReport}
+        tenantsCount={tenants.length}
+      />
     ) : (
       /* Admin Configuration Section */
       <div className="space-y-6">

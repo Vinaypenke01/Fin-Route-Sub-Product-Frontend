@@ -126,7 +126,18 @@ serve(async (req: Request) => {
 
     // 4. Update Master Database with Health Metrics
     const nowIso = new Date().toISOString();
-    const logRows: any[] = [];
+    const logRows: any[] = [
+      {
+        tenant_id: null,
+        tenant_name: 'Master Database',
+        tenant_email: 'Central Registry',
+        database_url: supabaseUrl,
+        status: 'online',
+        latency_ms: masterLatency,
+        error_message: null,
+        created_at: nowIso,
+      }
+    ];
 
     for (const r of pingResults) {
       logRows.push({

@@ -869,3 +869,49 @@ export async function pingAllTenantDatabases() {
     return { success: false, message: err.message || 'Error triggering database heartbeat' };
   }
 }
+
+/**
+ * Super-Admin: Fetch historical database keep-alive & health check logs from master DB.
+ */
+export async function fetchMasterDbHealthLogs(limit = 100) {
+  try {
+    try {
+      const res = await invokeAdminEdgeFunction('admin-tenants', 'get_health_logs', { limit });
+      if (res?.success) {
+        return { success: true, logs: res.logs || [] };
+      }
+    } catch (e) {
+      console.warn('Edge function get_health_logs fallback notice:', e);
+    }
+
+    const { data, error } = await masterSupabase
+      .from('master_db_health_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      return { success: false, logs: [], message: error.message };
+    }
+    return { success: true, logs: data || [] };
+  } catch (err) {
+    return { success: false, logs: [], message: err.message };
+  }
+}
+
+/**
+ * Super-Admin: Clear historical health logs from master DB.
+ */
+export async function clearMasterDbHealthLogs() {
+  try {
+    const { error } = await masterSupabase
+      .from('master_db_health_logs')
+      .delete()
+      .neq('status', '___DO_NOT_MATCH___');
+
+    if (error) throw error;
+    return { success: true };
+  } catch (err) {
+    return { success: false, message: err.message };
+  }
+}
