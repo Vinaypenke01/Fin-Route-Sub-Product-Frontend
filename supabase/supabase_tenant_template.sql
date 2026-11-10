@@ -95,6 +95,11 @@ CREATE TABLE IF NOT EXISTS tenant_settings (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Seed default settings if empty
+INSERT INTO tenant_settings (business_name, sub_title, client_name, currency_symbol, auto_roll_cash)
+SELECT 'FinRoute Collect', 'Sunday Collections & Ledger', 'Valued Partner', '₹', TRUE
+WHERE NOT EXISTS (SELECT 1 FROM tenant_settings);
+
 -- 8. Audit Log Table
 CREATE TABLE IF NOT EXISTS audit_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -131,3 +136,32 @@ CREATE POLICY "Tenant full access weekly_reconciliation" ON weekly_reconciliatio
 CREATE POLICY "Tenant full access loan_archive" ON loan_archive FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Tenant full access tenant_settings" ON tenant_settings FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Tenant full access audit_logs" ON audit_logs FOR ALL USING (true) WITH CHECK (true);
+
+-- 9. Auto-link Village Trigger (Guarantees village_id is never orphaned on insert or update)
+CREATE OR REPLACE FUNCTION trg_autolink_village()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_clean_name TEXT;
+    v_vid VARCHAR(100);
+BEGIN
+    IF NEW.village_name IS NOT NULL AND TRIM(NEW.village_name) != '' THEN
+        v_clean_name := TRIM(REPLACE(REPLACE(NEW.village_name, '📍 VILLAGE:', ''), 'VILLAGE:', ''));
+        SELECT id INTO v_vid FROM villages WHERE LOWER(TRIM(name)) = LOWER(v_clean_name) LIMIT 1;
+        IF v_vid IS NULL THEN
+            v_vid := 'VIL-' || FLOOR(EXTRACT(EPOCH FROM NOW()));
+            INSERT INTO villages (id, name, display_order)
+            VALUES (v_vid, v_clean_name, 999)
+            ON CONFLICT (id) DO NOTHING;
+        END IF;
+        NEW.village_id := COALESCE(NEW.village_id, v_vid);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_customers_autolink_village ON customers;
+CREATE TRIGGER trg_customers_autolink_village
+BEFORE INSERT OR UPDATE ON customers
+FOR EACH ROW EXECUTE FUNCTION trg_autolink_village();

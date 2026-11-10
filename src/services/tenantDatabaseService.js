@@ -161,7 +161,7 @@ export async function updateTenantPayment(client, customerId, weekId, amount) {
 /**
  * UPDATE CUSTOMER FIELD: Fast inline update
  */
-export async function updateTenantCustomerField(client, customerId, field, value) {
+export async function updateTenantCustomerField(client, customerId, field, value, isVillageDivider = false) {
   if (!client) throw new Error('Tenant DB client not ready.');
   const updatePayload = {};
 
@@ -177,13 +177,19 @@ export async function updateTenantCustomerField(client, customerId, field, value
   } else if (field === 'name') {
     const clean = String(value || '').trim();
     updatePayload['name'] = clean;
-    updatePayload['village_name'] = clean;
+    if (isVillageDivider) {
+      updatePayload['village_name'] = clean;
+    }
   } else if (field === 'phone') {
     updatePayload['phone'] = String(value || '').trim();
   } else if (field === 'villageName') {
     const clean = String(value || '').trim();
     updatePayload['village_name'] = clean;
-    updatePayload['name'] = clean;
+    if (isVillageDivider) {
+      updatePayload['name'] = clean;
+    }
+  } else if (field === 'villageId' || field === 'village_id') {
+    updatePayload['village_id'] = value || null;
   } else if (field === 'id') {
     updatePayload['id'] = String(value || '').trim();
   }
@@ -227,8 +233,8 @@ export async function addTenantCustomer(client, customer) {
     .replace('VILLAGE:', '')
     .trim();
 
-  // If villageId is missing but villageName exists, auto-resolve from villages table
-  if (!villageId && cleanVillageName) {
+  // If cleanVillageName exists, ensure village is registered in villages table to satisfy foreign key
+  if (cleanVillageName) {
     try {
       const { data: vRow } = await client
         .from('villages')
@@ -240,8 +246,8 @@ export async function addTenantCustomer(client, customer) {
       if (vRow?.id) {
         villageId = vRow.id;
       } else {
-        const newVilId = `VIL-${Date.now()}`;
-        await client.from('villages').insert([{ id: newVilId, name: cleanVillageName }]);
+        const newVilId = villageId || `VIL-${Date.now()}`;
+        await client.from('villages').upsert([{ id: newVilId, name: cleanVillageName }], { onConflict: 'id' });
         villageId = newVilId;
       }
     } catch (e) {
@@ -287,6 +293,7 @@ export async function deleteTenantCustomer(client, customerId, archiveRecord) {
         name: archiveRecord.name,
         phone: archiveRecord.phone || '',
         village_name: archiveRecord.villageName || '',
+        village_id: archiveRecord.villageId || null,
         disbursed: Number(archiveRecord.disbursed) || 0,
         original_amount: Number(archiveRecord.originalAmount) || 0,
         total_repaid: Number(archiveRecord.totalRepaid) || 0,
@@ -323,6 +330,7 @@ export async function archiveAndRenewTenantCustomer(client, { customerId, newAmo
       name: archiveRecord.name,
       phone: archiveRecord.phone || '',
       village_name: archiveRecord.villageName || '',
+      village_id: archiveRecord.villageId || null,
       disbursed: Number(archiveRecord.disbursed) || 0,
       original_amount: Number(archiveRecord.originalAmount) || 0,
       total_repaid: Number(archiveRecord.totalRepaid) || 0,
@@ -377,6 +385,7 @@ export async function archiveLoansInTenantDb(client, loansToArchive = []) {
     name: a.name,
     phone: a.phone || '',
     village_name: a.villageName || '',
+    village_id: a.villageId || a.village_id || null,
     disbursed: Number(a.disbursed) || 0,
     original_amount: Number(a.originalAmount || a.disbursed) || 0,
     total_repaid: Number(a.totalPaid) || 0,

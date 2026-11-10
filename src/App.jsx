@@ -38,6 +38,7 @@ import {
   addTenantCustomer,
   deleteTenantCustomer,
   archiveAndRenewCustomerInTenantDb,
+  archiveLoansInTenantDb,
   addTenantWeek,
   deleteTenantWeek,
   updateTenantRowOrder
@@ -413,7 +414,7 @@ export default function App() {
       enqueueSyncTask(key, async () => {
         if (tenantClient) {
           try {
-            await syncCustomerFieldToTenantDb(tenantClient, custIdToFind, field, value);
+            await syncCustomerFieldToTenantDb(tenantClient, custIdToFind, field, value, Boolean(prevCust.isVillageDivider));
             addToast(`Saved ${label} to Supabase!`, 'success');
           } catch (err) {
             console.error('Supabase customer update error:', err);
@@ -586,6 +587,7 @@ export default function App() {
       originalId: targetCust.id,
       name: targetCust.name,
       villageName: vName,
+      villageId: targetCust.villageId || targetCust.village_id || null,
       disbursed: targetCust.disbursed,
       originalAmount: targetCust.originalAmount || targetCust.disbursed,
       totalRepaid: totalPaid,
@@ -708,6 +710,10 @@ export default function App() {
 
     // Synchronize newly added record to Database / Cloud
     if (tenantClient) {
+      const resolvedVName = newCust.villageName || getCustomerVillageName(customers, insertUnderVillageRowId || custWithUid._rowId) || '';
+      const matchingDivider = customers.find(c => c.isVillageDivider && (c._rowId === insertUnderVillageRowId || c.villageName === resolvedVName || c.name === resolvedVName));
+      const resolvedVId = newCust.villageId || matchingDivider?.villageId || matchingDivider?.id || null;
+
       addTenantCustomer(tenantClient, {
         id: newCust.id,
         name: newCust.name,
@@ -717,7 +723,9 @@ export default function App() {
         disbursedDate: newCust.disbursedDate,
         startWeekId: custWithUid.startWeekId,
         isVillageDivider: newCust.isVillageDivider,
-        villageName: newCust.villageName
+        villageName: resolvedVName,
+        villageId: resolvedVId,
+        rowOrder: customers.length + 1
       })
         .then(() => addToast(`Added "${newCust.name}" to Supabase!`, 'success'))
         .catch(err => addToast(`Supabase add error: ${err.message}`, 'error'));
@@ -815,6 +823,7 @@ export default function App() {
       name: cust.name,
       phone: cust.phone || '',
       villageName: cust.villageName || getCustomerVillageName(customers, cust._rowId || cust.id) || '',
+      villageId: cust.villageId || cust.village_id || null,
       disbursed: cust.disbursed,
       originalAmount: cust.originalAmount || cust.disbursed,
       totalRepaid: getCustomerTotalPaid(cust),
@@ -1069,14 +1078,17 @@ export default function App() {
           id: `ARC-${Date.now()}-${c.id}`,
           originalId: c.id,
           name: c.name,
-          phone: c.phone,
+          phone: c.phone || '',
           villageName: c.villageName || getCustomerVillageName(customers, c._rowId || c.id) || '',
+          villageId: c.villageId || c.village_id || null,
           disbursed: c.disbursed,
+          originalAmount: c.originalAmount || c.disbursed,
           totalPaid: getCustomerTotalPaid(c),
           balance: balance,
           status: isPaid ? 'Paid Off' : 'Active',
           reason: isPaid ? 'Loan Completed / Paid Off' : 'Batch Archived',
-          dateArchived: today
+          dateArchived: today,
+          payments: { ...(c.payments || {}) }
         });
       } else {
         remaining.push(c);
@@ -1107,7 +1119,14 @@ export default function App() {
       return c;
     }));
 
-    // Synchronize batch archive to Google Sheet
+    // Synchronize batch archive to Supabase or Google Sheet
+    if (tenantClient) {
+      archiveLoansInTenantDb(tenantClient, toArchive)
+        .then(() => addToast(`Archived ${toArchive.length} loans in Supabase!`, 'success'))
+        .catch(err => addToast(`Supabase archive error: ${err.message}`, 'error'));
+      return;
+    }
+
     if (sheetUrl && auth) {
       archiveLoansInCloud(toArchive, auth, sheetUrl)
         .then(res => {

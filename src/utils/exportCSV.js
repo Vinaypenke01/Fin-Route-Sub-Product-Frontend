@@ -40,6 +40,7 @@ export function exportTrackerToCSV({
     'S.No',
     'Customer ID',
     'Customer Name (Telugu / English)',
+    'Village',
     'Phone',
     'Issue Date',
     'Original Amount (₹)',
@@ -54,6 +55,7 @@ export function exportTrackerToCSV({
 
   // 3. Customer Data Rows & Village Separators
   let customerSerial = 1;
+  let currentVillage = '';
   const weekTotals = {};
   weeks.forEach(w => {
     weekTotals[w.id] = 0;
@@ -66,13 +68,18 @@ export function exportTrackerToCSV({
 
   customers.forEach(c => {
     if (c.isVillageDivider) {
+      currentVillage = String(c.villageName || c.village_name || c.name || '')
+        .replace('📍 VILLAGE:', '')
+        .replace('VILLAGE:', '')
+        .trim();
       // Village Divider Row
-      const villageTitle = `📍 VILLAGE: ${c.villageName || c.name || 'Unnamed Village'}`;
-      const dividerRow = ['---', '---', villageTitle, '', '', '', '', '', ...weeks.map(() => ''), '', '', '---'];
+      const villageTitle = `📍 VILLAGE: ${currentVillage || 'Unnamed Village'}`;
+      const dividerRow = ['---', '---', villageTitle, currentVillage, '', '', '', '', '', ...weeks.map(() => ''), '', '', '---'];
       rows.push(dividerRow.map(escapeCSV));
       return;
     }
 
+    const assignedVillage = c.villageName || c.village_name || currentVillage || '';
     const totalPaid = getCustomerTotalPaid(c);
     const balance = getCustomerBalance(c);
     const status = getCustomerStatus(c);
@@ -88,6 +95,7 @@ export function exportTrackerToCSV({
       customerSerial++,
       c.id,
       c.name || '',
+      assignedVillage,
       c.phone || '',
       c.disbursedDate || '',
       origAmount,
@@ -110,6 +118,7 @@ export function exportTrackerToCSV({
     'GRAND TOTALS',
     '',
     `Total Customers: ${customerSerial - 1}`,
+    '',
     '',
     '',
     grandTotalOriginal,

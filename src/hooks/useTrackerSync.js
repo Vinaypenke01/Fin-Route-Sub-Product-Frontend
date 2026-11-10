@@ -156,26 +156,49 @@ export function useTrackerSync({
     }
   }, [auth, sheetUrl]);
 
-  // Dedicated Supabase DB Auto-Pull (High-performance direct PostgreSQL query)
+  // Dedicated Supabase DB Auto-Pull (High-performance direct PostgreSQL query with sleeping-DB retry)
   useEffect(() => {
     if (auth?.isSupabaseTenant && tenantClient) {
-      setCloudStatus({ connected: true, isSyncing: true, text: 'Supabase DB (Loading...)', error: null });
-      fetchTenantLedgerData(tenantClient)
-        .then(res => {
-          if (res) {
-            if (Array.isArray(res.customers)) setCustomers(normalizeCustomers(res.customers));
-            if (Array.isArray(res.weeks) && res.weeks.length > 0) setWeeks(res.weeks);
-            if (res.weeklyReconciliation) setWeeklyReconciliation(res.weeklyReconciliation);
-            if (Array.isArray(res.archive)) setArchive(res.archive);
-            setCloudStatus({ connected: true, isSyncing: false, text: 'Supabase DB (Private)', error: null });
-            addToast(`Connected to private Supabase DB (${res.customers?.length || 0} records)!`, 'success');
-          }
-        })
-        .catch(err => {
-          console.error('Supabase load error:', err);
-          setCloudStatus({ connected: false, isSyncing: false, text: 'Supabase Error', error: err.message });
-          addToast(`Supabase connection error: ${err.message}`, 'error');
-        });
+      let isMounted = true;
+      let retryAttempts = 0;
+      const maxRetries = 2;
+
+      const attemptFetch = () => {
+        if (!isMounted) return;
+        setCloudStatus({ connected: true, isSyncing: true, text: 'Supabase DB (Connecting...)', error: null });
+
+        fetchTenantLedgerData(tenantClient)
+          .then(res => {
+            if (!isMounted) return;
+            if (res) {
+              if (Array.isArray(res.customers)) setCustomers(normalizeCustomers(res.customers));
+              if (Array.isArray(res.weeks) && res.weeks.length > 0) setWeeks(res.weeks);
+              if (res.weeklyReconciliation) setWeeklyReconciliation(res.weeklyReconciliation);
+              if (Array.isArray(res.archive)) setArchive(res.archive);
+              setCloudStatus({ connected: true, isSyncing: false, text: 'Supabase DB (Private)', error: null });
+              addToast(`Connected to private Supabase DB (${res.customers?.length || 0} records)!`, 'success');
+            }
+          })
+          .catch(err => {
+            if (!isMounted) return;
+            const errMsg = String(err?.message || err);
+            const isSleepingOrTimeout = errMsg.includes('Failed to fetch') || errMsg.includes('503') || errMsg.includes('504') || errMsg.includes('timed out');
+
+            if (isSleepingOrTimeout && retryAttempts < maxRetries) {
+              retryAttempts++;
+              setCloudStatus({ connected: false, isSyncing: true, text: `Waking Database (Attempt ${retryAttempts}/${maxRetries})...`, error: errMsg });
+              setTimeout(attemptFetch, 2500);
+              return;
+            }
+
+            console.error('Supabase load error:', err);
+            setCloudStatus({ connected: false, isSyncing: false, text: 'Supabase Error', error: errMsg });
+            addToast(`Supabase connection error: ${errMsg}`, 'error');
+          });
+      };
+
+      attemptFetch();
+      return () => { isMounted = false; };
     }
   }, [auth?.isSupabaseTenant, tenantClient]);
 
