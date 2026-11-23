@@ -4,7 +4,7 @@ import { getCustomerTotalPaid, getCustomerBalance, getCustomerStatus } from './f
  * Escapes a CSV cell value to handle commas, newlines, and double quotes.
  * Mitigates CSV Formula / DDE Injection by prepending an apostrophe if value starts with =, +, -, @, or tab.
  */
-function escapeCSV(val) {
+export function escapeCSV(val) {
   if (val === null || val === undefined) return '""';
   let str = String(val);
   if (/^[=+\-@\t\r]/.test(str)) {
