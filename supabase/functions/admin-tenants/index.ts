@@ -335,6 +335,64 @@ serve(withCors(async (req: Request) => {
       }
 
       // ------------------------------------------------------------------------
+      // 4b. DELETE TENANT (master registry only; tenant project is untouched)
+      // ------------------------------------------------------------------------
+      case 'delete_tenant': {
+        const tenantId = String(payload.tenantId || '').trim();
+        const confirmEmail = String(payload.confirmEmail || '').trim().toLowerCase();
+        if (!tenantId || !confirmEmail) {
+          return errorResponse('tenantId and confirmEmail are required.', 400);
+        }
+
+        const { data: tenantRow, error: tErr } = await serviceClient
+          .from('master_tenants')
+          .select('id, email')
+          .eq('id', tenantId)
+          .maybeSingle();
+        if (tErr) throw tErr;
+        if (!tenantRow) {
+          return errorResponse('Tenant not found.', 404);
+        }
+        if (String(tenantRow.email || '').trim().toLowerCase() !== confirmEmail) {
+          return errorResponse('Confirmation email does not match this tenant.', 400);
+        }
+
+        const warnings: string[] = [];
+
+        // 1. Remove the operator's sign-in account from the tenant project so
+        //    any open session can no longer be refreshed.
+        try {
+          const access = await getTenantDbAccess(serviceClient, tenantId);
+          if (access?.secretKey && access.authUserId) {
+            const tenantAdmin = getTenantDataClient(access);
+            const { error: delErr } = await tenantAdmin.auth.admin.deleteUser(access.authUserId);
+            if (delErr && !/not found/i.test(delErr.message)) {
+              warnings.push(`Tenant sign-in account not removed: ${delErr.message}`);
+            }
+          } else if (access && !access.secretKey) {
+            warnings.push('No secret key was stored, so the operator\'s account in the tenant project (if any) was left in place.');
+          }
+        } catch (e) {
+          warnings.push(`Tenant sign-in account not removed: ${(e as Error)?.message || e}`);
+        }
+
+        // 2. Remove master records + Vault secret in one transaction
+        const { data: delRes, error: dErr } = await serviceClient.rpc('admin_delete_tenant', { p_tenant_id: tenantId });
+        if (dErr) throw dErr;
+        if (!delRes?.success) {
+          return errorResponse(delRes?.message || 'Tenant could not be deleted.', 400);
+        }
+
+        console.log(`Tenant deleted by ${callerUser.email}: ${tenantRow.email} (${tenantId})`);
+
+        return jsonResponse({
+          success: true,
+          message: `Tenant ${tenantRow.email} deleted from FinRoute.`,
+          warnings,
+        });
+      }
+
+      // ------------------------------------------------------------------------
       // 5. UPDATE TENANT DB CONFIG
       // ------------------------------------------------------------------------
       case 'update_tenant_db': {
