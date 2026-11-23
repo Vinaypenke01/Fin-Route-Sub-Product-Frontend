@@ -42,10 +42,49 @@ async function invokeAdminEdgeFunction(functionName, action, payload = {}) {
  * Returns tenant metadata and their isolated database connection details.
  */
 export async function authenticateTenant(email, password) {
-  try {
-    const cleanEmail = String(email || '').trim().toLowerCase();
-    const cleanPassword = String(password || '').trim();
+  const cleanEmail = String(email || '').trim().toLowerCase();
+  const cleanPassword = String(password || '').trim();
 
+  try {
+    // 1. Preferred: tenant-login Edge Function (verifies in master, returns a
+    //    tenant Auth session so the tenant DB can require signed-in operators).
+    const { data, error } = await masterSupabase.functions.invoke('tenant-login', {
+      body: { email: cleanEmail, password: cleanPassword },
+    });
+
+    if (!error && data) {
+      if (!data.success) {
+        return { success: false, message: data.message || 'Invalid email or password.' };
+      }
+      return {
+        success: true,
+        email: data.email,
+        clientName: data.clientName,
+        businessName: data.businessName,
+        tenantDbUrl: data.tenantDbUrl,
+        tenantAnonKey: data.tenantAnonKey,
+        tenantAuthRequired: Boolean(data.tenantAuthRequired),
+        tenantSession: data.session || null,
+        expiresAt: data.expiresAt ? new Date(data.expiresAt).getTime() : null,
+      };
+    }
+
+    const status = error?.context?.status;
+    if (status && status !== 404) {
+      let message = 'Authentication service error.';
+      try {
+        const body = await error.context.json();
+        message = body?.message || body?.error || message;
+      } catch { /* ignore */ }
+      return { success: false, message };
+    }
+    console.warn('tenant-login unavailable, falling back to legacy RPC login:', error);
+  } catch (err) {
+    console.warn('tenant-login call failed, falling back to legacy RPC login:', err);
+  }
+
+  // 2. Legacy fallback (function not deployed yet): public-key mode, no session
+  try {
     const { data, error } = await masterSupabase.rpc('verify_tenant_login', {
       p_email: cleanEmail,
       p_password: cleanPassword,
@@ -60,23 +99,19 @@ export async function authenticateTenant(email, password) {
       return { success: false, message: data?.message || 'Invalid email or password.' };
     }
 
-    const tenantDbUrl = data.tenant_supabase_url;
-    const tenantAnonKey = data.tenant_anon_key;
-
-    // Record login audit event asynchronously into the tenant dedicated database
-    recordTenantLoginAudit(tenantDbUrl, tenantAnonKey, {
-      email: data.email || cleanEmail,
-      clientName: data.client_name,
-      businessName: data.business_name,
-    }).catch(e => console.warn('Tenant login audit non-blocking error:', e));
+    if (data.tenant_auth_required) {
+      return { success: false, message: 'Secure sign-in service is unavailable. Please try again shortly.' };
+    }
 
     return {
       success: true,
       email: data.email,
       clientName: data.client_name,
       businessName: data.business_name,
-      tenantDbUrl: tenantDbUrl,
-      tenantAnonKey: tenantAnonKey,
+      tenantDbUrl: data.tenant_supabase_url,
+      tenantAnonKey: data.tenant_anon_key,
+      tenantAuthRequired: false,
+      tenantSession: null,
       expiresAt: data.expires_at ? new Date(data.expires_at).getTime() : null,
     };
   } catch (err) {
@@ -86,12 +121,12 @@ export async function authenticateTenant(email, password) {
 }
 
 /**
- * Safely records a user login audit event into the tenant's dedicated database
+ * Safely records a user login audit event into the tenant's dedicated database.
+ * Pass the tenant client that already holds the operator's session.
  */
-export async function recordTenantLoginAudit(tenantDbUrl, tenantAnonKey, { email, clientName, businessName }) {
-  if (!tenantDbUrl || !tenantAnonKey) return;
+export async function recordTenantLoginAudit(client, { email, clientName, businessName }) {
+  if (!client) return;
   try {
-    const client = createClient(tenantDbUrl, tenantAnonKey, { auth: { persistSession: false } });
 
     let device = 'Desktop / PC';
     let browser = 'Web Browser';
@@ -305,69 +340,39 @@ export async function getTenantsList() {
  * Super-Admin: Register a new tenant with their dedicated Supabase database.
  * Routes through the authenticated 'admin-tenants' Edge Function.
  */
-export async function createTenantWithDb({ email, clientName, businessName, password, tenantDbUrl, tenantAnonKey, expiresAt }) {
+async function edgeErrorMessage(err, fallback) {
   try {
-    // 1. Call Authenticated Edge Function
-    try {
-      const res = await invokeAdminEdgeFunction('admin-tenants', 'create_tenant', {
-        email,
-        clientName,
-        businessName,
-        password,
-        tenantDbUrl,
-        tenantAnonKey,
-        expiresAt,
-      });
-      if (res?.success) {
-        return { success: true, tenant: res.tenant };
-      }
-    } catch (e) {
-      console.warn('Edge Function admin-tenants create_tenant fallback:', e);
+    const body = await err?.context?.json();
+    return body?.message || body?.error || err?.message || fallback;
+  } catch {
+    return err?.message || fallback;
+  }
+}
+
+function warningsMessage(res) {
+  return Array.isArray(res?.warnings) && res.warnings.length ? res.warnings.join(' ') : null;
+}
+
+export async function createTenantWithDb({ email, clientName, businessName, password, tenantDbUrl, tenantAnonKey, tenantSecretKey, expiresAt }) {
+  // Edge Function only: it also stores the secret key in Vault and creates the
+  // operator's tenant sign-in account, which a direct table write would skip.
+  try {
+    const res = await invokeAdminEdgeFunction('admin-tenants', 'create_tenant', {
+      email,
+      clientName,
+      businessName,
+      password,
+      tenantDbUrl,
+      tenantAnonKey,
+      tenantSecretKey,
+      expiresAt,
+    });
+    if (res?.success) {
+      return { success: true, tenant: res.tenant, warning: warningsMessage(res) };
     }
-
-    // 2. Direct query fallback
-    const cleanEmail = String(email || '').trim().toLowerCase();
-
-    const { data: tenant, error: tErr } = await masterSupabase
-      .from('master_tenants')
-      .insert([{
-        email: cleanEmail,
-        client_name: clientName.trim(),
-        business_name: businessName?.trim() || 'FinRoute Collect',
-        status: 'active',
-      }])
-      .select()
-      .single();
-
-    if (tErr) throw tErr;
-
-    const { error: cErr } = await masterSupabase
-      .from('master_credentials')
-      .insert([{
-        tenant_id: tenant.id,
-        email: cleanEmail,
-        password_hash: password.trim(),
-        expires_at: expiresAt ? new Date(expiresAt).toISOString() : null,
-      }]);
-
-    if (cErr) throw cErr;
-
-    if (tenantDbUrl && tenantAnonKey) {
-      const { error: dErr } = await masterSupabase
-        .from('master_db_configs')
-        .insert([{
-          tenant_id: tenant.id,
-          tenant_supabase_url: tenantDbUrl.trim(),
-          tenant_anon_key: tenantAnonKey.trim(),
-          db_status: 'connected',
-        }]);
-
-      if (dErr) throw dErr;
-    }
-
-    return { success: true, tenant };
+    return { success: false, message: res?.message || res?.error || 'Failed to create tenant.' };
   } catch (err) {
-    return { success: false, message: err.message };
+    return { success: false, message: await edgeErrorMessage(err, 'Failed to create tenant.') };
   }
 }
 
@@ -377,24 +382,13 @@ export async function createTenantWithDb({ email, clientName, businessName, pass
  */
 export async function updateTenantStatus(tenantId, newStatus) {
   try {
-    try {
-      const res = await invokeAdminEdgeFunction('admin-tenants', 'update_tenant_status', { tenantId, status: newStatus });
-      if (res?.success) {
-        return { success: true };
-      }
-    } catch (e) {
-      console.warn('Edge Function update_tenant_status fallback:', e);
+    const res = await invokeAdminEdgeFunction('admin-tenants', 'update_tenant_status', { tenantId, status: newStatus });
+    if (res?.success) {
+      return { success: true, warning: warningsMessage(res) };
     }
-
-    const { error } = await masterSupabase
-      .from('master_tenants')
-      .update({ status: newStatus, updated_at: new Date().toISOString() })
-      .eq('id', tenantId);
-
-    if (error) throw error;
-    return { success: true };
+    return { success: false, message: res?.message || 'Failed to update status.' };
   } catch (err) {
-    return { success: false, message: err.message };
+    return { success: false, message: await edgeErrorMessage(err, 'Failed to update status.') };
   }
 }
 
@@ -412,70 +406,29 @@ export async function updateTenantFullDetails({
   password,
   tenantDbUrl,
   tenantAnonKey,
+  tenantSecretKey,
+  tenantAuthRequired,
 }) {
   try {
-    try {
-      const res = await invokeAdminEdgeFunction('admin-tenants', 'update_tenant_full', {
-        tenantId,
-        clientName,
-        businessName,
-        email,
-        phone,
-        status,
-        password,
-        tenantDbUrl,
-        tenantAnonKey,
-      });
-      if (res?.success) {
-        return { success: true };
-      }
-    } catch (e) {
-      console.warn('Edge Function update_tenant_full fallback:', e);
+    const res = await invokeAdminEdgeFunction('admin-tenants', 'update_tenant_full', {
+      tenantId,
+      clientName,
+      businessName,
+      email,
+      phone,
+      status,
+      password,
+      tenantDbUrl,
+      tenantAnonKey,
+      tenantSecretKey: tenantSecretKey || undefined,
+      tenantAuthRequired,
+    });
+    if (res?.success) {
+      return { success: true, warning: warningsMessage(res) };
     }
-
-    const cleanEmail = String(email || '').trim().toLowerCase();
-
-    const { error: tErr } = await masterSupabase
-      .from('master_tenants')
-      .update({
-        client_name: String(clientName).trim(),
-        business_name: String(businessName || 'FinRoute Collect').trim(),
-        email: cleanEmail,
-        phone: phone ? String(phone).trim() : null,
-        status: status || 'active',
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', tenantId);
-
-    if (tErr) console.warn('master_tenants update notice:', tErr);
-
-    const credsUpdate = {
-      email: cleanEmail,
-      updated_at: new Date().toISOString(),
-    };
-    if (password && String(password).trim()) {
-      credsUpdate.password_hash = String(password).trim();
-    }
-
-    await masterSupabase
-      .from('master_credentials')
-      .update(credsUpdate)
-      .eq('tenant_id', tenantId);
-
-    if (tenantDbUrl !== undefined || tenantAnonKey !== undefined) {
-      const dbUpdate = { updated_at: new Date().toISOString() };
-      if (tenantDbUrl) dbUpdate.tenant_supabase_url = String(tenantDbUrl).trim();
-      if (tenantAnonKey) dbUpdate.tenant_anon_key = String(tenantAnonKey).trim();
-
-      await masterSupabase
-        .from('master_db_configs')
-        .update(dbUpdate)
-        .eq('tenant_id', tenantId);
-    }
-
-    return { success: true };
+    return { success: false, message: res?.message || 'Failed to update tenant.' };
   } catch (err) {
-    return { success: false, message: err.message };
+    return { success: false, message: await edgeErrorMessage(err, 'Failed to update tenant.') };
   }
 }
 
@@ -483,178 +436,57 @@ export async function updateTenantFullDetails({
  * Super-Admin: Update a tenant's database URL and Anon Key in master DB.
  * Routes through the authenticated 'admin-tenants' Edge Function.
  */
-export async function updateTenantDbConfig(tenantId, tenantDbUrl, tenantAnonKey) {
+export async function updateTenantDbConfig(tenantId, tenantDbUrl, tenantAnonKey, tenantSecretKey) {
   try {
-    try {
-      const res = await invokeAdminEdgeFunction('admin-tenants', 'update_tenant_db', {
-        tenantId,
-        tenantDbUrl,
-        tenantAnonKey,
-      });
-      if (res?.success) {
-        return { success: true };
-      }
-    } catch (e) {
-      console.warn('Edge Function update_tenant_db fallback:', e);
+    const res = await invokeAdminEdgeFunction('admin-tenants', 'update_tenant_db', {
+      tenantId,
+      tenantDbUrl,
+      tenantAnonKey,
+      tenantSecretKey: tenantSecretKey || undefined,
+    });
+    if (res?.success) {
+      return { success: true, warning: warningsMessage(res) };
     }
-
-    const { error } = await masterSupabase
-      .from('master_db_configs')
-      .update({
-        tenant_supabase_url: String(tenantDbUrl).trim(),
-        tenant_anon_key: String(tenantAnonKey).trim(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq('tenant_id', tenantId);
-
-    if (error) throw error;
-    return { success: true };
+    return { success: false, message: res?.message || 'Failed to update database config.' };
   } catch (err) {
-    return { success: false, message: err.message };
+    return { success: false, message: await edgeErrorMessage(err, 'Failed to update database config.') };
   }
 }
 
 /**
  * Super-Admin: Fetch live audit logs & recent ledger transactions directly from tenant DB.
  */
-export async function fetchTenantAuditLogs(tenantDbUrl, tenantAnonKey, tenantMetadata = {}) {
-  if (!tenantDbUrl || !tenantAnonKey) {
+export async function fetchTenantAuditLogs(tenantId) {
+  if (!tenantId) {
     return { success: false, message: 'Tenant database is not configured.', logs: [] };
   }
-
+  // Server-side only: the tenant DB is read with the tenant secret key from Vault.
   try {
-    // 1. Try Edge Function proxy first
-    try {
-      const res = await invokeAdminEdgeFunction('admin-tenants', 'tenant_logs', {
-        tenantDbUrl,
-        tenantAnonKey,
-        tenantMetadata,
-      });
-      if (res?.success) {
-        return { success: true, logs: res.logs || [] };
-      }
-    } catch {
-      // fallback to direct client query below
+    const res = await invokeAdminEdgeFunction('admin-tenants', 'tenant_logs', { tenantId });
+    if (res?.success) {
+      return { success: true, logs: res.logs || [] };
     }
-
-    const tenantClient = createClient(tenantDbUrl, tenantAnonKey, { auth: { persistSession: false } });
-
-    const [
-      { data: directLogs },
-      { data: recentPayments },
-      { data: recentCustomers },
-      { data: recentArchive },
-    ] = await Promise.all([
-      tenantClient.from('audit_logs').select('*').order('created_at', { ascending: false }).limit(50),
-      tenantClient.from('payments').select('customer_id, week_id, amount, updated_at').order('updated_at', { ascending: false }).limit(20),
-      tenantClient.from('customers').select('id, name, disbursed, updated_at, created_at').order('updated_at', { ascending: false }).limit(15),
-      tenantClient.from('loan_archive').select('id, name, total_repaid, reason, created_at').order('created_at', { ascending: false }).limit(10),
-    ]);
-
-    const combined = [];
-
-    if (Array.isArray(directLogs)) {
-      directLogs.forEach(l => combined.push(l));
-    }
-
-    (recentPayments || []).forEach((p, idx) => {
-      combined.push({
-        id: `pay-${idx}-${p.customer_id}-${p.week_id}`,
-        action: 'PAYMENT_RECEIVED',
-        entity_type: 'Payment',
-        entity_id: `${p.customer_id} (${p.week_id})`,
-        details: { amount: `₹${Number(p.amount || 0).toLocaleString('en-IN')}`, week: p.week_id },
-        created_at: p.updated_at || new Date().toISOString(),
-      });
-    });
-
-    (recentCustomers || []).forEach((c, idx) => {
-      combined.push({
-        id: `cust-${idx}-${c.id}`,
-        action: 'CUSTOMER_RECORD',
-        entity_type: 'Customer',
-        entity_id: c.name || c.id,
-        details: { disbursed: `₹${Number(c.disbursed || 0).toLocaleString('en-IN')}` },
-        created_at: c.updated_at || c.created_at || new Date().toISOString(),
-      });
-    });
-
-    (recentArchive || []).forEach((a, idx) => {
-      combined.push({
-        id: `arch-${idx}-${a.id}`,
-        action: 'LOAN_ARCHIVED',
-        entity_type: 'Archive',
-        entity_id: a.name || a.id,
-        details: { reason: a.reason, totalRepaid: `₹${Number(a.total_repaid || 0).toLocaleString('en-IN')}` },
-        created_at: a.created_at || new Date().toISOString(),
-      });
-    });
-
-    combined.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-
-    return { success: true, logs: combined };
+    return { success: false, message: res?.message || 'Could not load tenant activity.', logs: [] };
   } catch (err) {
-    return { success: false, message: err.message, logs: [] };
+    return { success: false, message: await edgeErrorMessage(err, 'Could not load tenant activity.'), logs: [] };
   }
 }
 
 /**
- * Super-Admin: Live Ping and Data Statistics of Tenant DB.
+ * Super-Admin: Live Ping and Data Statistics of Tenant DB (server-side).
  */
-export async function fetchTenantStats(tenantDbUrl, tenantAnonKey) {
-  if (!tenantDbUrl || !tenantAnonKey) {
+export async function fetchTenantStats(tenantId) {
+  if (!tenantId) {
     return { connected: false, message: 'No DB credentials' };
   }
-
   try {
-    // 1. Try Edge Function proxy first
-    try {
-      const res = await invokeAdminEdgeFunction('admin-tenants', 'tenant_stats', {
-        tenantDbUrl,
-        tenantAnonKey,
-      });
-      if (res?.connected !== undefined) {
-        return res;
-      }
-    } catch {
-      // fallback to direct client query below
+    const res = await invokeAdminEdgeFunction('admin-tenants', 'tenant_stats', { tenantId });
+    if (res?.connected !== undefined) {
+      return res;
     }
-
-    const startTime = performance.now();
-    const tenantClient = createClient(tenantDbUrl, tenantAnonKey, { auth: { persistSession: false } });
-
-    const [
-      { data: customers, error: cErr },
-      { data: payments, error: pErr },
-      { data: weeks },
-    ] = await Promise.all([
-      tenantClient.from('customers').select('id, disbursed, original_amount, is_village_divider'),
-      tenantClient.from('payments').select('amount'),
-      tenantClient.from('weeks').select('id'),
-    ]);
-
-    const latency = Math.round(performance.now() - startTime);
-    if (cErr) throw cErr;
-    if (pErr) throw pErr;
-
-    const realCustomers = (customers || []).filter(c => !c.is_village_divider);
-    const totalDisbursed = realCustomers.reduce((sum, c) => sum + (Number(c.original_amount || c.disbursed) || 0), 0);
-    const totalCollected = (payments || []).reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-
-    return {
-      connected: true,
-      latencyMs: latency,
-      customerCount: realCustomers.length,
-      weeksCount: (weeks || []).length,
-      totalDisbursed,
-      totalCollected,
-      totalBalance: Math.max(0, totalDisbursed - totalCollected),
-    };
+    return { connected: false, message: res?.message || 'Could not reach tenant database.' };
   } catch (err) {
-    return {
-      connected: false,
-      message: err.message,
-    };
+    return { connected: false, message: await edgeErrorMessage(err, 'Could not reach tenant database.') };
   }
 }
 

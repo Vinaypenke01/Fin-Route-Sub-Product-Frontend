@@ -56,6 +56,13 @@ export default function ImportSheetModal({
         setImportStep('fetching');
         setStatusMessage('Connecting to MasterAuth to locate your linked Google Sheet...');
 
+        if (!auth?.password) {
+          throw new Error(
+            'For security your password is not kept after the page reloads. Sign out and sign in again, then run the import ' +
+            '(or use the "Custom URL" tab).'
+          );
+        }
+
         const masterRes = await resolveTenantFromMaster(auth?.email, auth?.password);
         const resolvedUrl = masterRes?.sheetUrl || currentSheetUrl;
 

@@ -127,15 +127,9 @@ ALTER TABLE loan_archive ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tenant_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 
--- Allow full read/write access for the tenant's authenticated / anon client
-CREATE POLICY "Tenant full access villages" ON villages FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Tenant full access customers" ON customers FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Tenant full access weeks" ON weeks FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Tenant full access payments" ON payments FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Tenant full access weekly_reconciliation" ON weekly_reconciliation FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Tenant full access loan_archive" ON loan_archive FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Tenant full access tenant_settings" ON tenant_settings FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Tenant full access audit_logs" ON audit_logs FOR ALL USING (true) WITH CHECK (true);
+-- Access policies: run supabase/tenant_lockdown.sql right after this file.
+-- Until then RLS is on with no policies, so only the service role can read or write.
+-- (Never use FOR ALL USING (true): that gives the public key full access.)
 
 -- 9. Auto-link Village Trigger (Guarantees village_id is never orphaned on insert or update)
 CREATE OR REPLACE FUNCTION trg_autolink_village()

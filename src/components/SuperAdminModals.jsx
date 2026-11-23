@@ -77,6 +77,8 @@ export default function SuperAdminModals({
   setNewDbUrl,
   newAnonKey,
   setNewAnonKey,
+  newSecretKey,
+  setNewSecretKey,
   createError,
   isCreating,
   handleCreateTenant,
@@ -721,6 +723,39 @@ export default function SuperAdminModals({
                   />
                 </div>
 
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">
+                    Tenant Secret Key{' '}
+                    <span className="text-[11px] font-normal text-slate-500">
+                      ({editForm.hasSecretKey ? 'stored securely; leave blank to keep' : 'not set'})
+                    </span>
+                  </label>
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    value={editForm.tenantSecretKey}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, tenantSecretKey: e.target.value }))}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 font-mono text-xs focus:outline-none focus:border-blue-500"
+                    placeholder="sb_secret_... (from the tenant project's API Keys page)"
+                  />
+                  <p className="text-[10.5px] text-slate-500 mt-1">
+                    Kept in the master Vault and used only by server functions. It is never shown again.
+                  </p>
+                </div>
+
+                <label className="flex items-start gap-2 p-3 rounded-xl border border-amber-200 bg-amber-50/60 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(editForm.tenantAuthRequired)}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, tenantAuthRequired: e.target.checked }))}
+                    className="mt-0.5"
+                  />
+                  <span className="text-[11px] text-amber-900 leading-relaxed">
+                    <strong>Require tenant sign-in.</strong> Turn on only after the tenant lockdown SQL has been run on this
+                    tenant's database. Operators then need a valid tenant session; the public key alone gets no data.
+                  </span>
+                </label>
+
                 <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
                   <button
                     type="button"
@@ -843,6 +878,21 @@ export default function SuperAdminModals({
                   required
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 font-mono focus:outline-none focus:border-blue-500"
                 />
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-semibold mb-1">Tenant Secret Key (recommended)</label>
+                <input
+                  type="password"
+                  autoComplete="off"
+                  placeholder="sb_secret_..."
+                  value={newSecretKey}
+                  onChange={(e) => setNewSecretKey(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 font-mono focus:outline-none focus:border-blue-500"
+                />
+                <p className="text-[10.5px] text-slate-500 mt-1">
+                  Stored in the master Vault. Lets the server create the operator's sign-in on their private database.
+                </p>
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">

@@ -6,22 +6,11 @@
 // ==============================================================================
 // @ts-ignore: Deno standard library import
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
-// @ts-ignore: Supabase JS library import
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1';
 import { withCors, handleCors, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { getServiceClient, verifySuperAdmin } from '../_shared/auth.ts';
+import { pingTenantDatabase, type TenantPingResult } from '../_shared/tenant.ts';
 
 declare const Deno: any;
-
-interface TenantPingResult {
-  tenantId: string;
-  name: string;
-  email: string;
-  dbUrl: string;
-  status: 'online' | 'sleeping' | 'error' | 'unconfigured';
-  latencyMs: number | null;
-  errorMessage?: string | null;
-}
 
 serve(withCors(async (req: Request) => {
   // 1. Handle CORS Preflight
@@ -54,75 +43,11 @@ serve(withCors(async (req: Request) => {
     }
 
     const allTenants = tenantRows || [];
-
-    // 3. Ping Each Tenant Database in Parallel with Timeout
-    const pingPromises = allTenants.map(async (t: any): Promise<TenantPingResult> => {
-      const dbConfig = Array.isArray(t.master_db_configs) ? t.master_db_configs[0] : t.master_db_configs;
-      const dbUrl = (dbConfig?.tenant_supabase_url || '').trim();
-      const anonKey = (dbConfig?.tenant_anon_key || '').trim();
-      const tenantName = t.client_name || t.business_name || 'Tenant';
-
-      if (!dbUrl || !anonKey) {
-        return {
-          tenantId: t.id,
-          name: tenantName,
-          email: t.email,
-          dbUrl: '',
-          status: 'unconfigured',
-          latencyMs: null,
-          errorMessage: 'No dedicated database URL configured',
-        };
-      }
-
-      const tenantStart = performance.now();
-      try {
-        const tenantClient = createClient(dbUrl, anonKey, {
-          auth: { persistSession: false },
-        });
-
-        // Run lightweight ping query with 6s timeout
-        const pingPromise = Promise.race([
-          tenantClient.from('tenant_settings').select('id').limit(1),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Connection timed out (>6000ms)')), 6000)),
-        ]);
-
-        const result: any = await pingPromise;
-        const latency = Math.round(performance.now() - tenantStart);
-
-        if (result?.error) {
-          // If tenant_settings doesn't exist, try weeks table fallback
-          const fallback = await tenantClient.from('weeks').select('id').limit(1);
-          if (fallback.error && !fallback.error.message.includes('42P01')) {
-            throw fallback.error;
-          }
-        }
-
-        return {
-          tenantId: t.id,
-          name: tenantName,
-          email: t.email,
-          dbUrl,
-          status: 'online',
-          latencyMs: latency,
-        };
-      } catch (err: any) {
-        const latency = Math.round(performance.now() - tenantStart);
-        const errMsg = String(err?.message || err);
-        const isSleeping = errMsg.includes('timed out') || errMsg.includes('503') || errMsg.includes('504') || errMsg.includes('Failed to fetch');
-
-        return {
-          tenantId: t.id,
-          name: tenantName,
-          email: t.email,
-          dbUrl,
-          status: isSleeping ? 'sleeping' : 'error',
-          latencyMs: latency,
-          errorMessage: errMsg,
-        };
-      }
-    });
-
-    const pingResults = await Promise.all(pingPromises);
+    const pingResults: TenantPingResult[] = await Promise.all(allTenants.map((t: any) => pingTenantDatabase(serviceClient, {
+      id: t.id,
+      name: t.client_name || t.business_name || "Tenant",
+      email: t.email,
+    })));
 
     // 4. Update Master Database with Health Metrics
     const nowIso = new Date().toISOString();

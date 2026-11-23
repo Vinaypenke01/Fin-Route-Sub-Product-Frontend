@@ -78,6 +78,8 @@ export default function LoginScreen({ onLoginSuccess, defaultEmail = '', sheetUr
               businessName: supabaseRes.businessName,
               tenantDbUrl: supabaseRes.tenantDbUrl,
               tenantAnonKey: supabaseRes.tenantAnonKey,
+              tenantSession: supabaseRes.tenantSession || null,
+              tenantAuthRequired: Boolean(supabaseRes.tenantAuthRequired),
               expiry: supabaseRes.expiresAt || null,
               rememberMe,
               isSupabaseTenant: true
