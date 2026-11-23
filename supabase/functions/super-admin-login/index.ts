@@ -9,12 +9,12 @@
 // ==============================================================================
 // @ts-ignore: Deno standard library import
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
-import { handleCors, jsonResponse, errorResponse } from '../_shared/cors.ts';
+import { withCors, handleCors, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { getAnonClient, getServiceClient } from '../_shared/auth.ts';
 
 const GENERIC_AUTH_ERROR = 'Invalid administrator email or password.';
 
-serve(async (req: Request) => {
+serve(withCors(async (req: Request) => {
   const corsRes = handleCors(req);
   if (corsRes) return corsRes;
 
@@ -83,4 +83,4 @@ serve(async (req: Request) => {
     console.error('super-admin-login exception:', err);
     return errorResponse('Internal authentication error.', 500);
   }
-});
+}));

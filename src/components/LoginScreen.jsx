@@ -83,7 +83,13 @@ export default function LoginScreen({ onLoginSuccess, defaultEmail = '', sheetUr
               isSupabaseTenant: true
             });
             return;
-          } else if (supabaseRes && !supabaseRes.success && !supabaseRes.message.includes('not found')) {
+          }
+          // verify_tenant_login returns one generic message for unknown email and wrong
+          // password (no account enumeration), so treat both as "try the next gateway".
+          // Only stop here for definitive account states (locked, suspended, expired, no DB).
+          const supaMsg = String(supabaseRes?.message || '');
+          const isCredentialMiss = /not found|invalid email or password/i.test(supaMsg);
+          if (supabaseRes && !supabaseRes.success && !isCredentialMiss) {
             setErrorMsg(supabaseRes.message || 'Invalid email or password.');
             setLoading(false);
             return;

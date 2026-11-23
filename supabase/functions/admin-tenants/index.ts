@@ -9,13 +9,13 @@ import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 // @ts-ignore: Supabase JS library import
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1';
 // @ts-ignore: TS extension import in Deno
-import { handleCors, jsonResponse, errorResponse } from '../_shared/cors.ts';
+import { withCors, handleCors, jsonResponse, errorResponse } from '../_shared/cors.ts';
 // @ts-ignore: TS extension import in Deno
 import { verifySuperAdmin } from '../_shared/auth.ts';
 
 declare const Deno: any;
 
-serve(async (req: Request) => {
+serve(withCors(async (req: Request) => {
   // 1. Handle CORS Preflight
   const corsRes = handleCors(req);
   if (corsRes) return corsRes;
@@ -725,4 +725,4 @@ serve(async (req: Request) => {
     const message = err instanceof Error ? err.message : 'Internal server error';
     return errorResponse(message, 500);
   }
-});
+}));

@@ -8,8 +8,8 @@
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 // @ts-ignore: Supabase JS library import
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1';
-import { handleCors, jsonResponse, errorResponse } from '../_shared/cors.ts';
-import { getServiceClient } from '../_shared/auth.ts';
+import { withCors, handleCors, jsonResponse, errorResponse } from '../_shared/cors.ts';
+import { getServiceClient, verifySuperAdmin } from '../_shared/auth.ts';
 
 declare const Deno: any;
 
@@ -23,7 +23,7 @@ interface TenantPingResult {
   errorMessage?: string | null;
 }
 
-serve(async (req: Request) => {
+serve(withCors(async (req: Request) => {
   // 1. Handle CORS Preflight
   const corsRes = handleCors(req);
   if (corsRes) return corsRes;
@@ -175,6 +175,8 @@ serve(async (req: Request) => {
       }
     }
 
+    const isSuperAdminCaller = await verifySuperAdmin(req).then(() => true).catch(() => false);
+
     const onlineCount = pingResults.filter((r) => r.status === 'online').length;
     const failedCount = pingResults.filter((r) => r.status === 'sleeping' || r.status === 'error').length;
 
@@ -192,11 +194,13 @@ serve(async (req: Request) => {
         failedCount,
         unconfiguredCount: pingResults.filter((r) => r.status === 'unconfigured').length,
       },
-      results: pingResults,
+      // Per-tenant details (names, emails, DB URLs) only for verified super-admins;
+      // anonymous callers such as the GitHub cron only get the summary.
+      ...(isSuperAdminCaller ? { results: pingResults } : {}),
     });
   } catch (err: any) {
     console.error('Keep-alive execution error:', err);
     return errorResponse(err?.message || 'Keep-alive pinger failed', 500);
   }
-});
+}));
 
