@@ -1,10 +1,7 @@
 import { useEffect, useRef } from 'react';
-import { pullAllFromCloud } from '../services/cloudService';
 import { fetchTenantLedgerData } from '../services/tenantDatabaseService';
 import { parseDate, formatDateDMY } from '../utils/formatters';
 import { normalizeCustomers } from '../utils/customerNormalization';
-
-const GOOGLE_SCRIPT_URL_KEY = 'SUNDAY_MONEY_TRACKER_GS_URL';
 
 /**
  * Custom hook to manage sequential background syncing, tenant scoped localStorage persistence,
@@ -21,9 +18,6 @@ export function useTrackerSync({
   setWeeklyReconciliation,
   archive,
   setArchive,
-  sheetUrl,
-  setSheetUrl,
-  envSheetUrl,
   cloudStatus,
   setCloudStatus,
   addToast,
@@ -35,7 +29,7 @@ export function useTrackerSync({
   const isProcessingQueueRef = useRef(false);
 
   // Sequential Background Queue Processor: ensures rapid-fire edits
-  // are processed sequentially without concurrent lock collisions on Google Apps Script
+  // are processed sequentially (one database write at a time, in order)
   const processSyncQueue = async () => {
     if (isProcessingQueueRef.current) return;
     if (syncQueueRef.current.length === 0) return;
@@ -61,7 +55,7 @@ export function useTrackerSync({
     }
 
     isProcessingQueueRef.current = false;
-    setCloudStatus(prev => ({ ...prev, isSyncing: false, text: 'Google Sheet', connected: true }));
+    setCloudStatus(prev => ({ ...prev, isSyncing: false, text: 'Supabase DB (Private)' }));
   };
 
   const enqueueSyncTask = (taskKey, executeFn) => {
@@ -104,14 +98,6 @@ export function useTrackerSync({
     }
   }, [auth?.email, weeks, customers, weeklyReconciliation, archive, getTenantStorageKey]);
 
-  // Sync Sheet URL changes
-  useEffect(() => {
-    if (envSheetUrl && !auth?.sheetUrl && envSheetUrl !== sheetUrl) {
-      setSheetUrl(envSheetUrl);
-      localStorage.setItem(GOOGLE_SCRIPT_URL_KEY, envSheetUrl);
-    }
-  }, [envSheetUrl, auth?.sheetUrl, sheetUrl, setSheetUrl]);
-
   // Ingest cloud data
   const ingestCloudData = (data) => {
     if (!data) return;
@@ -131,30 +117,6 @@ export function useTrackerSync({
       setArchive(data.archive);
     }
   };
-
-  // Auto-pull from cloud on initial authenticated load (Google Sheets flow)
-  useEffect(() => {
-    if (auth?.isSupabaseTenant) return; // Supabase tenants use direct PostgreSQL connection below
-    const targetUrl = auth?.sheetUrl || sheetUrl;
-    if (auth && targetUrl) {
-      setCloudStatus(prev => ({ ...prev, isSyncing: true, text: 'Pulling...' }));
-      pullAllFromCloud(auth, targetUrl)
-        .then(res => {
-          if (res && res.status === 'success' && res.data) {
-            ingestCloudData(res.data);
-            setCloudStatus({ connected: true, isSyncing: false, text: 'Google Sheet', error: null });
-            addToast(`Synchronized ${res.data.customers?.length || 0} records from Sheet!`, 'success');
-          } else if (res && res.status === 'unauthorized') {
-            handleLogout();
-          } else {
-            setCloudStatus({ connected: false, isSyncing: false, text: 'Sync Error', error: res?.message });
-          }
-        })
-        .catch(err => {
-          setCloudStatus({ connected: false, isSyncing: false, text: 'Offline Mode', error: err.message });
-        });
-    }
-  }, [auth, sheetUrl]);
 
   // Dedicated Supabase DB Auto-Pull (High-performance direct PostgreSQL query with sleeping-DB retry)
   useEffect(() => {

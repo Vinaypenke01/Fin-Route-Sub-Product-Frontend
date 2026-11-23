@@ -7,29 +7,12 @@ import TrackerTable from './components/TrackerTable';
 import AppModals from './components/AppModals';
 import ToastContainer from './components/Toast';
 import LoadingScreen, { TableSkeleton } from './components/LoadingScreen';
-import { initialData } from './initialData';
 import { getCustomerTotalPaid, getCustomerBalance, getCustomerStatus, parseDate, recalculateWeeksFromWeekOne } from './utils/formatters';
 import { normalizeCustomers, getCustomerVillageName } from './utils/customerNormalization';
 import { generatePdfReport } from './utils/generatePdfReport';
 import { useTrackerSync } from './hooks/useTrackerSync';
 import { exportTrackerToCSV } from './utils/exportCSV';
 import { getSavedLanguage, setSavedLanguage } from './utils/translations';
-import {
-  pullAllFromCloud,
-  pushAllToCloud,
-  syncPaymentToCloud,
-  syncCustomerFieldToCloud,
-  syncReconToCloud,
-  syncWeeksToCloud,
-  deleteCustomerFromCloud,
-  deleteArchivedRecordFromCloud,
-  addCustomerToCloud,
-  syncRowOrderToCloud,
-  archiveAndRenewCustomerInCloud,
-  archiveLoansInCloud,
-  addWeekToCloud,
-  deleteWeekFromCloud
-} from './services/cloudService';
 import {
   getTenantClient,
   syncPaymentToTenantDb,
@@ -52,16 +35,13 @@ const SuperAdminPanel = lazy(() => import('./components/SuperAdminPanel'));
 
 import {
   SESSION_AUTH_KEY,
-  GOOGLE_SCRIPT_URL_KEY,
+  LEGACY_SHEET_URL_KEY,
   getTenantStorageKey,
   getValidStoredSession
 } from './services/sessionService';
 import { useLedgerCalculations } from './hooks/useLedgerCalculations';
 
 export default function App() {
-  // Read environment variables directly through Vite (No secrets exposed in client bundle)
-  const envSheetUrl = (import.meta.env.VITE_GOOGLE_SHEET_URL || '').trim();
-  const defaultEmail = '';
 
   // Initial Session Hydration State (Prevents flash of login screen on reload)
   const [isHydratingSession, setIsHydratingSession] = useState(true);
@@ -119,12 +99,6 @@ export default function App() {
     }, 3200);
   };
 
-  // Google Sheet Web App URL (dynamically retrieved from tenant session)
-  const [sheetUrl, setSheetUrl] = useState(() => {
-    const session = getValidStoredSession();
-    return session?.sheetUrl || envSheetUrl || localStorage.getItem(GOOGLE_SCRIPT_URL_KEY) || '';
-  });
-
   // Dynamic tenant-scoped data initialization
   const initialSession = getValidStoredSession();
   const initialTenantKey = getTenantStorageKey(initialSession?.email);
@@ -138,7 +112,7 @@ export default function App() {
         if (Array.isArray(parsed?.weeks) && parsed.weeks.length > 0) return parsed.weeks;
       }
     } catch { }
-    return initialSession?.email ? [] : (initialData.weeks || []);
+    return [];
   });
 
   const [customers, setCustomers] = useState(() => {
@@ -149,7 +123,7 @@ export default function App() {
         if (Array.isArray(parsed?.customers)) return normalizeCustomers(parsed.customers);
       }
     } catch { }
-    return initialSession?.email ? [] : normalizeCustomers(initialData.customers || []);
+    return [];
   });
 
   const [weeklyReconciliation, setWeeklyReconciliation] = useState(() => {
@@ -182,11 +156,10 @@ export default function App() {
     tenantClient?.auth.signOut({ scope: 'local' }).catch(() => {});
     sessionStorage.removeItem(SESSION_AUTH_KEY);
     localStorage.removeItem(SESSION_AUTH_KEY);
-    localStorage.removeItem(GOOGLE_SCRIPT_URL_KEY);
+    localStorage.removeItem(LEGACY_SHEET_URL_KEY);
     setAuth(null);
     setViewMode('landing');
     window.location.hash = '';
-    setSheetUrl('');
     setWeeks([]);
     setCustomers([]);
     setWeeklyReconciliation({});
@@ -219,9 +192,9 @@ export default function App() {
 
   // Cloud Status & Indicator
   const [cloudStatus, setCloudStatus] = useState({
-    connected: !!sheetUrl,
+    connected: false,
     isSyncing: false,
-    text: sheetUrl ? 'Google Sheet' : 'Local Mode',
+    text: 'Local Mode',
     error: null
   });
 
@@ -230,7 +203,6 @@ export default function App() {
   const [isAddVillageOpen, setIsAddVillageOpen] = useState(false);
   const [isAddWeekOpen, setIsAddWeekOpen] = useState(false);
   const [isArchiveOpen, setIsArchiveOpen] = useState(false);
-  const [isCloudSyncOpen, setIsCloudSyncOpen] = useState(false);
   const [isRenewModalOpen, setIsRenewModalOpen] = useState(false);
   const [renewTargetCustomer, setRenewTargetCustomer] = useState(null);
   const [villageContext, setVillageContext] = useState(null);
@@ -239,7 +211,7 @@ export default function App() {
   const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, title: '', message: '', type: 'warning', onConfirm: null });
 
   // Background Sync, Persistence, Auto-pull, and Unload Protection via custom hook
-  const { debounceSync, enqueueSyncTask, ingestCloudData } = useTrackerSync({
+  const { debounceSync, enqueueSyncTask } = useTrackerSync({
     auth,
     tenantClient,
     weeks,
@@ -250,9 +222,6 @@ export default function App() {
     setWeeklyReconciliation,
     archive,
     setArchive,
-    sheetUrl,
-    setSheetUrl,
-    envSheetUrl,
     cloudStatus,
     setCloudStatus,
     addToast,
@@ -303,32 +272,24 @@ export default function App() {
     return () => clearInterval(interval);
   }, [auth?.isSupabaseTenant, tenantClient]);
 
-  // Import Modal State
-  const [isImportSheetOpen, setIsImportSheetOpen] = useState(false);
 
   // Handle Login with Session Expiration & Tenant Isolation
   const handleLoginSuccess = async ({
     email,
-    password,
     clientName,
     businessName,
-    sheetUrl: userSheetUrl,
     tenantDbUrl,
     tenantAnonKey,
     tenantSession,
     tenantAuthRequired,
-    isSupabaseTenant,
     expiry,
-    rememberMe,
-    cloudData,
-    needsCloudPull
+    rememberMe
   }) => {
     const sessionDuration = rememberMe ? (7 * 24 * 60 * 60 * 1000) : (24 * 60 * 60 * 1000);
-    const resolvedSheetUrl = userSheetUrl || sheetUrl;
 
-    // Supabase tenants: install the tenant DB session BEFORE the ledger loads,
-    // so every query runs as the signed-in operator.
-    if (isSupabaseTenant && tenantDbUrl && tenantAnonKey) {
+    // Install the tenant DB session BEFORE the ledger loads, so every query
+    // runs as the signed-in operator.
+    if (tenantDbUrl && tenantAnonKey) {
       const client = getTenantClient(tenantDbUrl, tenantAnonKey, { remember: !!rememberMe });
       if (tenantSession?.access_token && tenantSession?.refresh_token) {
         const { error } = await client.auth.setSession({
@@ -348,18 +309,15 @@ export default function App() {
         .catch(() => {});
     }
 
+    // No password is ever stored: the tenant DB session is kept by supabase-js.
     const sessionObj = {
       email,
-      // Google Sheets mode still sends the password with each sync request, so it
-      // is kept for those tenants only. Supabase tenants never persist it.
-      password: isSupabaseTenant ? undefined : password,
       clientName: clientName || 'Valued Partner',
       businessName: businessName || 'FinRoute Collect',
-      sheetUrl: resolvedSheetUrl,
       tenantDbUrl: tenantDbUrl || null,
       tenantAnonKey: tenantAnonKey || null,
       tenantAuthRequired: Boolean(tenantAuthRequired),
-      isSupabaseTenant: Boolean(isSupabaseTenant),
+      isSupabaseTenant: true,
       expiry: expiry || null,
       loginTimestamp: Date.now(),
       expiresAt: Date.now() + sessionDuration,
@@ -373,15 +331,9 @@ export default function App() {
       sessionStorage.setItem(SESSION_AUTH_KEY, JSON.stringify(sessionObj));
       localStorage.removeItem(SESSION_AUTH_KEY);
     }
-    // Password stays in memory only for this tab (used by the one-off Sheets import)
-    setAuth({ ...sessionObj, password });
+    setAuth(sessionObj);
     setViewMode('app');
     window.location.hash = '#tracker';
-
-    if (resolvedSheetUrl) {
-      setSheetUrl(resolvedSheetUrl);
-      localStorage.setItem(GOOGLE_SCRIPT_URL_KEY, resolvedSheetUrl);
-    }
 
     // Hydrate immediately from tenant's scoped local cache if exists
     try {
@@ -398,17 +350,8 @@ export default function App() {
         setWeeklyReconciliation({});
         setArchive([]);
       }
-    } catch (e) { }
+    } catch { /* ignore corrupt cache */ }
 
-    if (cloudData) {
-      ingestCloudData(cloudData);
-    } else if (needsCloudPull && resolvedSheetUrl) {
-      pullAllFromCloud(sessionObj, resolvedSheetUrl).then(res => {
-        if (res?.data) ingestCloudData(res.data);
-      }).catch(err => {
-        console.warn('Initial tenant pull failed:', err);
-      });
-    }
     addToast(`Welcome back, ${clientName || email}!`, 'success');
   };
 
@@ -441,7 +384,6 @@ export default function App() {
     }
 
     const custIdToFind = prevCust.id;
-    const custName = prevCust.name || 'Customer';
 
     const updatedCustomer = {
       ...prevCust,
@@ -462,7 +404,7 @@ export default function App() {
     };
     const label = fieldLabels[field] || field;
 
-    if (!tenantClient && (!sheetUrl || !auth)) {
+    if (!tenantClient) {
       addToast(`Saved ${label} locally (Offline mode)`, 'info');
       return;
     }
@@ -480,21 +422,6 @@ export default function App() {
           }
           return;
         }
-        if (!sheetUrl || !auth) return;
-        try {
-          const res = await syncCustomerFieldToCloud(custIdToFind, field, value, custName, auth, sheetUrl);
-          if (res && (res.status === 'success' || res.result?.success !== false)) {
-            if (prevCust.isVillageDivider) {
-              addToast(`Saved Village Name "${value}" to Sheet!`, 'success');
-            } else {
-              addToast(`Saved ${label} (${value}) for "${custName}" to Sheet!`, 'success');
-            }
-          } else {
-            addToast(`Sheet Warning: ${res?.result?.message || res?.message || 'Could not save ' + label}`, 'warning');
-          }
-        } catch (err) {
-          addToast(`Failed to save ${label} for "${custName}" to Sheet: ${err.message}`, 'error');
-        }
       });
     }, 300);
   };
@@ -505,7 +432,6 @@ export default function App() {
     if (!prevCust) return;
 
     const custId = prevCust.id;
-    const custName = prevCust.name || 'Customer';
     const weekObj = weeks.find(w => w.id === weekId);
     const weekLabel = weekObj?.label || weekId;
 
@@ -530,17 +456,6 @@ export default function App() {
             addToast(`Supabase Payment Error: ${err.message}`, 'error');
           }
           return;
-        }
-        if (!sheetUrl || !auth) return;
-        try {
-          const res = await syncPaymentToCloud(custId, weekId, amount, custName, auth, sheetUrl);
-          if (res && res.status === 'success' && res.result?.success !== false) {
-            addToast(`Saved Payment ₹${amount} (${weekLabel}) for "${custName}" to Sheet!`, 'success');
-          } else {
-            addToast(`Sheet Warning: ${res?.result?.message || res?.message || 'Could not save payment'}`, 'warning');
-          }
-        } catch (err) {
-          addToast(`Failed to save Payment for "${custName}" to Sheet: ${err.message}`, 'error');
         }
       });
     }, 250);
@@ -581,17 +496,6 @@ export default function App() {
           }
           return;
         }
-        if (!sheetUrl || !auth) return;
-        try {
-          const res = await syncReconToCloud(weekId, r.prevCash, r.expenses, r.amountGiven, weeks, updated, auth, sheetUrl, r.salaries);
-          if (res && (res.status === 'success' || res.result?.success !== false)) {
-            addToast(`Saved Reconciliation for ${weekLabel} to Sheet!`, 'success');
-          } else {
-            addToast(`Sheet Warning: ${res?.result?.message || res?.message || 'Could not save reconciliation'}`, 'warning');
-          }
-        } catch (err) {
-          addToast(`Failed to save Reconciliation for ${weekLabel} to Sheet: ${err.message}`, 'error');
-        }
       });
     }, 450);
   };
@@ -615,9 +519,6 @@ export default function App() {
             deleteTenantCustomer(tenantClient, targetCust.id);
             addToast(`Deleted village divider "${custName}" from Supabase.`, 'info');
             return;
-          }
-          if (sheetUrl && auth) {
-            deleteCustomerFromCloud(targetCust.id, targetCust.name, auth, sheetUrl);
           }
           addToast(`Deleted village divider "${custName}".`, 'info');
         }
@@ -671,29 +572,6 @@ export default function App() {
       deleteTenantCustomer(tenantClient, targetCust.id, archiveRecord)
         .then(() => addToast(`Stored "${targetCust.name}" in Supabase Archive!`, 'success'))
         .catch(err => addToast(`Supabase delete error: ${err.message}`, 'error'));
-      return;
-    }
-
-    if (sheetUrl && auth) {
-      deleteCustomerFromCloud(targetCust.id, targetCust.name, auth, sheetUrl, {
-        villageName: vName,
-        reason: reason,
-        disbursed: targetCust.disbursed,
-        totalRepaid: totalPaid,
-        finalBalance: balance,
-        dateArchived: today,
-        archiveRecord: archiveRecord
-      })
-        .then(res => {
-          if (res && res.status === 'success' && res.result?.success !== false) {
-            addToast(`Stored "${targetCust.name}" in Google Sheet Archive!`, 'success');
-          } else {
-            addToast(`Sheet Warning: ${res?.result?.message || 'Could not update archive on sheet'}`, 'warning');
-          }
-        })
-        .catch(err => {
-          addToast(`Failed to sync delete to Sheet: ${err.message}`, 'error');
-        });
     }
   };
 
@@ -713,19 +591,6 @@ export default function App() {
           tenantClient.from('loan_archive').delete().or(`id.eq.${archiveId},original_customer_id.eq.${archiveId}`)
             .then(() => addToast(`Removed "${name}" from Supabase Archive!`, 'success'))
             .catch(err => addToast(`Supabase archive delete error: ${err.message}`, 'error'));
-          return;
-        }
-
-        if (sheetUrl && auth) {
-          deleteArchivedRecordFromCloud(archiveId, name, auth, sheetUrl)
-            .then(res => {
-              if (res && res.status === 'success' && res.result?.success !== false) {
-                addToast(`Removed "${name}" from Google Sheet Archive!`, 'success');
-              }
-            })
-            .catch(err => {
-              addToast(`Failed to remove from Sheet Archive: ${err.message}`, 'error');
-            });
         }
       }
     });
@@ -738,14 +603,6 @@ export default function App() {
       startWeekId: newCust.startWeekId || weeks[0]?.id || 'week_1',
       _rowId: `row-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
     };
-
-    let prevRowCustId = null;
-    if (insertUnderVillageRowId) {
-      const vIdx = customers.findIndex(item => item._rowId === insertUnderVillageRowId);
-      if (vIdx !== -1) {
-        prevRowCustId = customers[vIdx].id;
-      }
-    }
 
     if (newCust.insertAtBeginning) {
       setCustomers(prev => [custWithUid, ...prev]);
@@ -790,31 +647,7 @@ export default function App() {
       return;
     }
 
-    if (sheetUrl && auth) {
-      addCustomerToCloud({
-        id: newCust.id,
-        name: newCust.name,
-        disbursed: newCust.disbursed,
-        phone: newCust.phone,
-        disbursedDate: newCust.disbursedDate,
-        originalAmount: newCust.originalAmount,
-        startWeekId: custWithUid.startWeekId,
-        isVillageDivider: newCust.isVillageDivider,
-        insertAfterId: prevRowCustId
-      }, auth, sheetUrl)
-        .then(res => {
-          if (res && (res.status === 'success' || res.result?.success !== false)) {
-            addToast(`Synchronized "${newCust.name}" to Google Sheet!`, 'success');
-          } else {
-            addToast(`Sheet Warning: ${res?.result?.message || 'Could not save customer to sheet'}`, 'warning');
-          }
-        })
-        .catch(err => {
-          addToast(`Failed to add "${newCust.name}" to Sheet: ${err.message}`, 'error');
-        });
-    } else {
-      addToast(`Added "${newCust.name}" locally (Offline mode)`, 'info');
-    }
+    addToast(`Added "${newCust.name}" locally (Offline mode)`, 'info');
   };
 
   // Move Row (reorder customer / village with Cloud Sync)
@@ -835,20 +668,7 @@ export default function App() {
         const orderedIds = next.map(c => c.id || c.name);
         if (tenantClient) {
           updateTenantRowOrder(tenantClient, orderedIds);
-          return;
         }
-        if (!sheetUrl || !auth) return;
-        syncRowOrderToCloud(orderedIds, auth, sheetUrl)
-          .then(res => {
-            if (res && (res.status === 'success' || res.result?.success !== false)) {
-              addToast(`Saved route order to Sheet!`, 'success');
-            } else {
-              addToast(`Sheet Warning: ${res?.result?.message || 'Could not save row order'}`, 'warning');
-            }
-          })
-          .catch(err => {
-            addToast(`Failed to save route order to Sheet: ${err.message}`, 'error');
-          });
       }, 500);
 
       return next;
@@ -937,29 +757,7 @@ export default function App() {
       return;
     }
 
-    if (sheetUrl && auth) {
-      archiveAndRenewCustomerInCloud({
-        customerId: cust.id,
-        customerName: cust.name,
-        newAmount: newAmount,
-        newDate: newDate || today,
-        renewedAtWeek: targetWeekId,
-        pastCyclePayments: previousPayments,
-        archiveRecord: archiveRecord
-      }, auth, sheetUrl)
-        .then(res => {
-          if (res && res.status === 'success' && res.result?.success !== false) {
-            addToast(`Renewed loan in Google Sheet for "${cust.name}"!`, 'success');
-          } else {
-            addToast(`Sheet Warning: ${res?.result?.message || 'Could not renew in sheet'}`, 'warning');
-          }
-        })
-        .catch(err => {
-          addToast(`Failed to renew loan in Sheet: ${err.message}`, 'error');
-        });
-    } else {
-      addToast(`Renewed loan for "${cust.name}" locally (Offline mode)`, 'info');
-    }
+    addToast(`Renewed loan for "${cust.name}" locally (Offline mode)`, 'info');
   };
 
   // Restore Archived Customer back to active tracker
@@ -1017,25 +815,7 @@ export default function App() {
       return;
     }
 
-    if (auth && sheetUrl) {
-      setCloudStatus(prev => ({ ...prev, isSyncing: true, text: 'Saving dates...' }));
-      syncWeeksToCloud(updatedWeeks, auth, sheetUrl)
-        .then(res => {
-          if (res && (res.status === 'success' || res.result?.success !== false)) {
-            setCloudStatus({ connected: true, isSyncing: false, text: 'Google Sheet', error: null });
-            addToast(`Week 1 updated to ${newDateStr}. All week dates synchronized in Sheet!`, 'success');
-          } else {
-            setCloudStatus({ connected: false, isSyncing: false, text: 'Sync Error', error: res?.message });
-            addToast(`Sheet Warning: ${res?.result?.message || res?.message || 'Could not update week dates'}`, 'warning');
-          }
-        })
-        .catch(err => {
-          setCloudStatus({ connected: false, isSyncing: false, text: 'Offline Mode', error: err.message });
-          addToast(`Failed to sync week dates to Sheet: ${err.message}`, 'error');
-        });
-    } else {
-      addToast(`Week 1 updated to ${newDateStr} locally (Offline mode)`, 'info');
-    }
+    addToast(`Week 1 updated to ${newDateStr} locally (Offline mode)`, 'info');
   };
 
   // Add Week Column with Cloud Sync
@@ -1054,25 +834,7 @@ export default function App() {
       return;
     }
 
-    if (sheetUrl && auth) {
-      addWeekToCloud({
-        label: newWeek.label,
-        date: newWeek.date,
-        weeklyReconciliation: weeklyReconciliation
-      }, auth, sheetUrl)
-        .then(res => {
-          if (res && (res.status === 'success' || res.result?.success !== false)) {
-            addToast(`Added column "${newWeek.label}" to Google Sheet!`, 'success');
-          } else {
-            addToast(`Sheet Warning: ${res?.result?.message || 'Could not add week column to sheet'}`, 'warning');
-          }
-        })
-        .catch(err => {
-          addToast(`Failed to add week column to Sheet: ${err.message}`, 'error');
-        });
-    } else {
-      addToast(`Added column "${newWeek.label}" locally (Offline mode)`, 'info');
-    }
+    addToast(`Added column "${newWeek.label}" locally (Offline mode)`, 'info');
   };
 
   // Delete Latest Week with Cloud Sync
@@ -1098,21 +860,7 @@ export default function App() {
           return;
         }
 
-        if (sheetUrl && auth) {
-          deleteWeekFromCloud(auth, sheetUrl)
-            .then(res => {
-              if (res && (res.status === 'success' || res.result?.success !== false)) {
-                addToast(`Deleted column "${latestWeek.label}" from Google Sheet!`, 'success');
-              } else {
-                addToast(`Sheet Warning: ${res?.result?.message || 'Could not delete column from sheet'}`, 'warning');
-              }
-            })
-            .catch(err => {
-              addToast(`Failed to delete column from Sheet: ${err.message}`, 'error');
-            });
-        } else {
-          addToast(`Removed column: ${latestWeek.label} locally (Offline mode)`, 'info');
-        }
+        addToast(`Removed column: ${latestWeek.label} locally (Offline mode)`, 'info');
       }
     });
   };
@@ -1185,79 +933,7 @@ export default function App() {
       return;
     }
 
-    if (sheetUrl && auth) {
-      archiveLoansInCloud(toArchive, auth, sheetUrl)
-        .then(res => {
-          if (res && (res.status === 'success' || res.result?.success !== false)) {
-            addToast(`Archived ${toArchive.length} loans in Google Sheet!`, 'success');
-          } else {
-            addToast(`Sheet Warning: ${res?.result?.message || 'Could not archive loans in sheet'}`, 'warning');
-          }
-        })
-        .catch(err => {
-          addToast(`Failed to archive loans in Sheet: ${err.message}`, 'error');
-        });
-    } else {
-      addToast(`Archived ${toArchive.length} customers locally (Offline mode)`, 'info');
-    }
-  };
-
-  // Manual Cloud Pull
-  const handleManualPull = async () => {
-    if (!sheetUrl) {
-      addToast('Please configure your Google Apps Script URL first.', 'warning');
-      setIsCloudSyncOpen(true);
-      return;
-    }
-    setCloudStatus(prev => ({ ...prev, isSyncing: true, text: 'Pulling...' }));
-    addToast('Fetching records from Google Sheet...', 'info');
-    try {
-      const res = await pullAllFromCloud(auth, sheetUrl);
-      if (res && res.status === 'success' && res.data) {
-        ingestCloudData(res.data);
-        setCloudStatus({ connected: true, isSyncing: false, text: 'Google Sheet', error: null });
-        addToast(`Loaded ${res.data.customers?.length || 0} records from Sheet!`, 'success');
-        setIsCloudSyncOpen(false);
-      } else {
-        addToast('Error from Google Sheet: ' + (res?.message || 'Check deployment'), 'error');
-        setCloudStatus({ connected: false, isSyncing: false, text: 'Sync Error', error: res?.message });
-      }
-    } catch (err) {
-      addToast('Failed to pull from Google Sheet: ' + err.message, 'error');
-      setCloudStatus({ connected: false, isSyncing: false, text: 'Offline Mode', error: err.message });
-    }
-  };
-
-  // Manual Cloud Push
-  const handleManualPush = async () => {
-    if (!sheetUrl) {
-      addToast('Please configure your Google Apps Script URL first.', 'warning');
-      setIsCloudSyncOpen(true);
-      return;
-    }
-    setCloudStatus(prev => ({ ...prev, isSyncing: true, text: 'Pushing...' }));
-    addToast('Pushing all current records to Google Sheet...', 'info');
-    try {
-      const res = await pushAllToCloud({ weeks, customers, weeklyReconciliation }, auth, sheetUrl);
-      if (res && res.status === 'success') {
-        setCloudStatus({ connected: true, isSyncing: false, text: 'Google Sheet', error: null });
-        addToast('Successfully synchronized all records to Google Sheet!', 'success');
-        setIsCloudSyncOpen(false);
-      } else {
-        addToast('Error pushing to Sheet: ' + (res?.message || 'Check deployment'), 'error');
-        setCloudStatus({ connected: false, isSyncing: false, text: 'Sync Error', error: res?.message });
-      }
-    } catch (err) {
-      addToast('Failed to push to Google Sheet: ' + err.message, 'error');
-      setCloudStatus({ connected: false, isSyncing: false, text: 'Offline Mode', error: err.message });
-    }
-  };
-
-  // Save Sheet URL
-  const handleSaveSheetUrl = (newUrl) => {
-    setSheetUrl(newUrl);
-    localStorage.setItem(GOOGLE_SCRIPT_URL_KEY, newUrl);
-    addToast('Saved Google Sheet URL.', 'success');
+    addToast(`Archived ${toArchive.length} customers locally (Offline mode)`, 'info');
   };
 
   // Download PDF Report in Horizontal Landscape Format (Full Account Details, Logo & Cash Reconciliation)
@@ -1318,9 +994,6 @@ export default function App() {
         <Suspense fallback={<LoadingScreen message="Loading secure sign-in..." />}>
           <LoginScreen
             onLoginSuccess={handleLoginSuccess}
-            defaultEmail={defaultEmail}
-            sheetUrl={sheetUrl}
-            onSaveSheetUrl={handleSaveSheetUrl}
             onBackToLanding={() => {
               setViewMode('landing');
               window.location.hash = '';
@@ -1361,42 +1034,15 @@ export default function App() {
         onOpenAddWeek={() => setIsAddWeekOpen(true)}
         onOpenDeleteWeek={handleOpenDeleteWeek}
         onOpenArchive={() => setIsArchiveOpen(true)}
-        onOpenCloudSync={() => setIsCloudSyncOpen(true)}
-        onPullFromCloud={handleManualPull}
-        onPushToCloud={handleManualPush}
         onDownloadPDF={handleDownloadPDF}
         isGeneratingPDF={isGeneratingPDF}
         onExportCSV={handleExportCSV}
         onLogout={handleLogout}
         clientName={auth?.clientName}
         isSupabaseTenant={Boolean(auth?.isSupabaseTenant)}
-        onOpenImportSheet={() => setIsImportSheetOpen(true)}
         language={language}
         onLanguageChange={handleLanguageChange}
       />
-
-      {/* Supabase Dedicated Migration Banner (Shown when tenant connects with 0 or 1 customer in their private DB) */}
-      {auth?.isSupabaseTenant && customers.length <= 1 && (
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-4">
-          <div className="bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 border border-blue-500/40 rounded-2xl p-6 text-white shadow-xl flex flex-col md:flex-row items-center justify-between gap-6">
-            <div>
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/20 text-blue-300 text-xs font-semibold mb-2">
-                <span>🚀 Dedicated PostgreSQL Database Connected</span>
-              </div>
-              <h3 className="text-xl font-bold">Welcome to your private Supabase database!</h3>
-              <p className="text-sm text-slate-300 mt-1 max-w-xl">
-                Your database is ready. Would you like to import all active customers, village routes, and past payment history from Google Sheets into your private database now?
-              </p>
-            </div>
-            <button
-              onClick={() => setIsImportSheetOpen(true)}
-              className="px-6 py-3 rounded-xl bg-blue-500 hover:bg-blue-400 active:bg-blue-600 text-white font-bold text-sm shadow-lg shadow-blue-500/30 transition-all flex items-center gap-2 shrink-0 cursor-pointer"
-            >
-              <span>Import Google Sheet into Supabase</span>
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* 2. Key Performance Indicators Deck */}
       <KpiDeck
@@ -1471,14 +1117,6 @@ export default function App() {
         handleArchive={handleArchive}
         activeCount={activeCount}
         paidOffCount={paidOffCount}
-        isCloudSyncOpen={isCloudSyncOpen}
-        setIsCloudSyncOpen={setIsCloudSyncOpen}
-        sheetUrl={sheetUrl}
-        handleSaveSheetUrl={handleSaveSheetUrl}
-        handleManualPull={handleManualPull}
-        handleManualPush={handleManualPush}
-        cloudStatus={cloudStatus}
-        auth={auth}
         confirmDialog={confirmDialog}
         setConfirmDialog={setConfirmDialog}
         isDeleteCustomerOpen={isDeleteCustomerOpen}
@@ -1487,16 +1125,6 @@ export default function App() {
         setDeleteTargetCustomer={setDeleteTargetCustomer}
         customers={customers}
         handleConfirmDeleteCustomer={handleConfirmDeleteCustomer}
-        isImportSheetOpen={isImportSheetOpen}
-        setIsImportSheetOpen={setIsImportSheetOpen}
-        tenantClient={tenantClient}
-        onImportSuccess={({ weeks: importedWeeks, customers: importedCusts, weeklyReconciliation: importedRecon, archive: importedArchive }) => {
-          if (Array.isArray(importedCusts)) setCustomers(normalizeCustomers(importedCusts));
-          if (Array.isArray(importedWeeks) && importedWeeks.length > 0) setWeeks(importedWeeks);
-          if (importedRecon) setWeeklyReconciliation(importedRecon);
-          if (Array.isArray(importedArchive)) setArchive(importedArchive);
-          addToast(`Import complete! Loaded ${importedCusts.length} customer records into Supabase.`, 'success');
-        }}
       />
 
       {/* 6. FinRoute Sub-Product Footer */}

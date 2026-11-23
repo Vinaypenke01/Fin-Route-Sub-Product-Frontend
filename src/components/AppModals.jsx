@@ -5,11 +5,9 @@ import {
   CustomerRenewModal,
   AddWeekModal,
   ArchiveModal,
-  CloudSyncModal,
   ConfirmModal,
   DeleteCustomerModal
 } from './Modals';
-import ImportSheetModal from './ImportSheetModal';
 import { getCustomerVillageName } from '../utils/customerNormalization';
 
 export default function AppModals({
@@ -43,16 +41,6 @@ export default function AppModals({
   activeCount,
   paidOffCount,
 
-  // Cloud Sync
-  isCloudSyncOpen,
-  setIsCloudSyncOpen,
-  sheetUrl,
-  handleSaveSheetUrl,
-  handleManualPull,
-  handleManualPush,
-  cloudStatus,
-  auth,
-
   // Confirm Dialog
   confirmDialog,
   setConfirmDialog,
@@ -63,13 +51,7 @@ export default function AppModals({
   deleteTargetCustomer,
   setDeleteTargetCustomer,
   customers,
-  handleConfirmDeleteCustomer,
-
-  // Import Sheet
-  isImportSheetOpen,
-  setIsImportSheetOpen,
-  tenantClient,
-  onImportSuccess
+  handleConfirmDeleteCustomer
 }) {
   return (
     <>
@@ -114,17 +96,6 @@ export default function AppModals({
         paidOffCount={paidOffCount}
       />
 
-      <CloudSyncModal
-        isOpen={isCloudSyncOpen}
-        onClose={() => setIsCloudSyncOpen(false)}
-        currentUrl={sheetUrl}
-        onSaveUrl={handleSaveSheetUrl}
-        onPull={handleManualPull}
-        onPush={handleManualPush}
-        isSyncing={cloudStatus?.isSyncing}
-        onOpenImportSheet={auth?.isSupabaseTenant ? () => setIsImportSheetOpen(true) : undefined}
-      />
-
       <ConfirmModal
         isOpen={confirmDialog.isOpen}
         title={confirmDialog.title}
@@ -143,16 +114,6 @@ export default function AppModals({
         customer={deleteTargetCustomer}
         villageName={getCustomerVillageName(customers, deleteTargetCustomer?._rowId)}
         onDelete={handleConfirmDeleteCustomer}
-      />
-
-      <ImportSheetModal
-        isOpen={isImportSheetOpen}
-        onClose={() => setIsImportSheetOpen(false)}
-        auth={auth}
-        tenantClient={tenantClient}
-        currentSheetUrl={sheetUrl || auth?.sheetUrl || ''}
-        currentRecordsCount={customers.filter(c => !c.isVillageDivider).length}
-        onImportSuccess={onImportSuccess}
       />
     </>
   );
