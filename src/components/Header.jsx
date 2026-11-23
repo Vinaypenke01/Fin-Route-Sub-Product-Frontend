@@ -9,16 +9,12 @@ export default function Header({
   onOpenAddWeek,
   onOpenDeleteWeek,
   onOpenArchive,
-  onOpenCloudSync,
-  onPullFromCloud,
-  onPushToCloud,
   onDownloadPDF,
   isGeneratingPDF = false,
   onExportCSV,
   onLogout,
   clientName = '',
   isSupabaseTenant = false,
-  onOpenImportSheet,
   language = 'en',
   onLanguageChange
 }) {
@@ -158,18 +154,6 @@ export default function Header({
             <Archive className="w-3.5 h-3.5 text-amber-600" />
             <span>{t('actions.archiveRenew', language)}</span>
           </button>
-
-          {/* Supabase Tenant: Import from Google Sheet Action */}
-          {isSupabaseTenant && (
-            <button
-              onClick={onOpenImportSheet}
-              className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 active:bg-emerald-200 border border-emerald-300 text-emerald-800 rounded-lg text-xs font-bold shadow-2xs transition-colors cursor-pointer"
-              title="Import legacy customer and payment data from Google Sheets into your private Supabase database"
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
-              <span>{t('actions.importSheet', language)}</span>
-            </button>
-          )}
 
           {/* Download PDF Ledger Report */}
           <button

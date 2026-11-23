@@ -1,10 +1,8 @@
 import React, { useState } from 'react';
-import { Lock, Eye, EyeOff, ShieldCheck, AlertCircle, Loader2, Link2, Building2, ArrowLeft } from 'lucide-react';
-import { resolveTenantFromMaster, loginToCloud } from '../services/cloudService';
+import { Lock, Eye, EyeOff, ShieldCheck, AlertCircle, Loader2, ArrowLeft } from 'lucide-react';
 import { authenticateTenant } from '../services/masterAuthService';
 
-export default function LoginScreen({ onLoginSuccess, defaultEmail = '', sheetUrl = '', onSaveSheetUrl, onBackToLanding }) {
-  const masterAuthUrl = (import.meta.env.VITE_MASTER_AUTH_URL || '').trim();
+export default function LoginScreen({ onLoginSuccess, onBackToLanding }) {
   const masterSupabaseUrl = (import.meta.env.VITE_MASTER_SUPABASE_URL || '').trim();
   // Never pre-fill email: user must type their own registered email
   const [email, setEmail] = useState('');
@@ -12,13 +10,9 @@ export default function LoginScreen({ onLoginSuccess, defaultEmail = '', sheetUr
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
   const [consentGiven, setConsentGiven] = useState(false);
-  const [customSheetUrl, setCustomSheetUrl] = useState('');
-  const [showUrlConfig, setShowUrlConfig] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
-
-  const activeSheetUrl = (customSheetUrl || sheetUrl || '').trim();
 
   // Validate fields helper
   const validateForm = () => {
@@ -42,13 +36,6 @@ export default function LoginScreen({ onLoginSuccess, defaultEmail = '', sheetUr
       errors.consent = 'You must accept the Terms & Privacy Policy to sign in.';
     }
 
-    if (customSheetUrl.trim()) {
-      const url = customSheetUrl.trim();
-      if (!url.startsWith('https://script.google.com/') || !url.includes('/exec')) {
-        errors.customSheetUrl = 'URL must be a valid Google Script Web App ending with /exec.';
-      }
-    }
-
     setFieldErrors(errors);
     return { isValid: Object.keys(errors).length === 0, trimmedEmail, trimmedPw };
   };
@@ -63,116 +50,30 @@ export default function LoginScreen({ onLoginSuccess, defaultEmail = '', sheetUr
       return;
     }
 
+    if (!masterSupabaseUrl) {
+      setErrorMsg('Sign-in service is not configured. Please contact support.');
+      return;
+    }
+
     setLoading(true);
 
     try {
-      // 1. Supabase Master Database Authentication Flow (Dedicated Database-per-tenant)
-      if (masterSupabaseUrl && !customSheetUrl.trim()) {
-        try {
-          const supabaseRes = await authenticateTenant(trimmedEmail, trimmedPw);
-          if (supabaseRes && supabaseRes.success) {
-            onLoginSuccess({
-              email: trimmedEmail,
-              password: trimmedPw,
-              clientName: supabaseRes.clientName || 'Valued Partner',
-              businessName: supabaseRes.businessName,
-              tenantDbUrl: supabaseRes.tenantDbUrl,
-              tenantAnonKey: supabaseRes.tenantAnonKey,
-              tenantSession: supabaseRes.tenantSession || null,
-              tenantAuthRequired: Boolean(supabaseRes.tenantAuthRequired),
-              expiry: supabaseRes.expiresAt || null,
-              rememberMe,
-              isSupabaseTenant: true
-            });
-            return;
-          }
-          // verify_tenant_login returns one generic message for unknown email and wrong
-          // password (no account enumeration), so treat both as "try the next gateway".
-          // Only stop here for definitive account states (locked, suspended, expired, no DB).
-          const supaMsg = String(supabaseRes?.message || '');
-          const isCredentialMiss = /not found|invalid email or password/i.test(supaMsg);
-          if (supabaseRes && !supabaseRes.success && !isCredentialMiss) {
-            setErrorMsg(supabaseRes.message || 'Invalid email or password.');
-            setLoading(false);
-            return;
-          }
-        } catch (supaErr) {
-          console.warn('Supabase auth fallback to MasterAuth:', supaErr);
-        }
-      }
-
-      // 2. Fallback Flow: Central Multi-Tenant Master Auth Gateway (Google Sheets)
-      if (masterAuthUrl && !customSheetUrl.trim()) {
-        const masterRes = await resolveTenantFromMaster(trimmedEmail, trimmedPw, consentGiven, masterAuthUrl);
-
-        if (masterRes && masterRes.status === 'success') {
-          if (!masterRes.sheetUrl || !masterRes.sheetUrl.includes('/exec')) {
-            setErrorMsg('Your private ledger sheet is not configured properly. Please contact support.');
-            return;
-          }
-
-          if (onSaveSheetUrl) {
-            onSaveSheetUrl(masterRes.sheetUrl);
-          }
-
-          onLoginSuccess({
-            email: trimmedEmail,
-            password: trimmedPw,
-            clientName: masterRes.clientName || 'Valued Partner',
-            sheetUrl: masterRes.sheetUrl,
-            expiry: masterRes.expiry || null,
-            rememberMe,
-            cloudData: null,
-            needsCloudPull: true
-          });
-          return;
-        }
-
-        // Specific error messages from MasterAuth gatekeeper
-        if (masterRes?.status === 'locked') {
-          setErrorMsg(masterRes.message || 'Too many failed login attempts. Access is locked for 15 minutes.');
-          return;
-        }
-        if (masterRes?.status === 'inactive') {
-          setErrorMsg(masterRes.message || 'Your account is currently inactive. Please contact support.');
-          return;
-        }
-        if (masterRes?.status === 'expired') {
-          setErrorMsg(masterRes.message || 'Your subscription has expired. Please contact support to renew.');
-          return;
-        }
-        setErrorMsg(masterRes?.message || 'Invalid email or password.');
-        return;
-      }
-
-      // 2. Fallback Flow: Direct Sheet URL authentication (Single-Tenant / Offline / Custom Override)
-      if (!activeSheetUrl) {
-        setErrorMsg('Please configure your Google Sheet Web App URL or configure Master Auth.');
-        setShowUrlConfig(true);
-        return;
-      }
-
-      const res = await loginToCloud(trimmedEmail, trimmedPw, activeSheetUrl);
-
-      if (res && res.status === 'success') {
-        if (onSaveSheetUrl && customSheetUrl && customSheetUrl !== sheetUrl) {
-          onSaveSheetUrl(customSheetUrl);
-        }
-
-        onLoginSuccess({
+      const res = await authenticateTenant(trimmedEmail, trimmedPw);
+      if (res?.success) {
+        await onLoginSuccess({
           email: trimmedEmail,
-          password: trimmedPw,
-          clientName: 'Administrator',
-          sheetUrl: activeSheetUrl,
-          expiry: null,
-          rememberMe,
-          cloudData: res.data || null,
-          needsCloudPull: !res.data
+          clientName: res.clientName || 'Valued Partner',
+          businessName: res.businessName,
+          tenantDbUrl: res.tenantDbUrl,
+          tenantAnonKey: res.tenantAnonKey,
+          tenantSession: res.tenantSession || null,
+          tenantAuthRequired: Boolean(res.tenantAuthRequired),
+          expiry: res.expiresAt || null,
+          rememberMe
         });
         return;
       }
-
-      setErrorMsg(res?.message || 'Access denied: Invalid email or password.');
+      setErrorMsg(res?.message || 'Invalid email or password.');
     } catch (err) {
       console.error('Authentication error:', err);
       setErrorMsg('Network error connecting to authentication server. Please check internet access.');
@@ -300,47 +201,6 @@ export default function LoginScreen({ onLoginSuccess, defaultEmail = '', sheetUr
             )}
           </div>
 
-          {/* Optional Google Sheet URL configuration toggle (Advanced / Standalone override) */}
-          <div>
-            <button
-              type="button"
-              onClick={() => setShowUrlConfig(!showUrlConfig)}
-              className="inline-flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-slate-600 font-medium transition-colors cursor-pointer"
-            >
-              <Link2 className="w-3 h-3" />
-              <span>{showUrlConfig ? 'Hide Custom Server Override' : 'Advanced: Custom Server Override'}</span>
-            </button>
-
-            {showUrlConfig && (
-              <div className="mt-2 p-3 bg-slate-50 border border-slate-200 rounded-lg animate-in fade-in duration-150">
-                <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                  Private Google Apps Script URL (/exec)
-                </label>
-                <input
-                  type="text"
-                  value={customSheetUrl}
-                  onChange={(e) => {
-                    setCustomSheetUrl(e.target.value);
-                    if (fieldErrors.customSheetUrl) setFieldErrors(prev => ({ ...prev, customSheetUrl: '' }));
-                  }}
-                  placeholder="https://script.google.com/macros/s/.../exec"
-                  className={`w-full px-2.5 py-1.5 text-xs border rounded font-mono focus:outline-none focus:ring-1 ${
-                    fieldErrors.customSheetUrl
-                      ? 'border-red-400 bg-red-50/20 focus:ring-red-400'
-                      : 'border-slate-300 focus:ring-blue-500'
-                  }`}
-                />
-                {fieldErrors.customSheetUrl ? (
-                  <p className="mt-1 text-[11px] text-red-600 font-medium">{fieldErrors.customSheetUrl}</p>
-                ) : (
-                  <p className="text-[10px] text-slate-400 mt-1">
-                    Leave blank to automatically connect via Central Master Auth.
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-
           {/* Remember Me */}
           <div className="flex items-center justify-between text-xs pt-1">
             <label className="flex items-center gap-2 cursor-pointer select-none text-slate-600">
@@ -354,7 +214,7 @@ export default function LoginScreen({ onLoginSuccess, defaultEmail = '', sheetUr
             </label>
           </div>
 
-          {/* Legal Consent Agreement (Required by MasterAuth Col H) */}
+          {/* Legal Consent Agreement */}
           <div className={`p-2.5 rounded-lg border text-xs transition-colors ${
             fieldErrors.consent
               ? 'bg-red-50/50 border-red-300'
@@ -425,7 +285,7 @@ export default function LoginScreen({ onLoginSuccess, defaultEmail = '', sheetUr
         <div className="mt-6 pt-4 border-t border-slate-100 flex flex-col items-center gap-2 text-[11px] text-slate-500">
           <div className="flex items-center gap-1.5 text-slate-600">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
-            <span>Encrypted Session • Cloud-authenticated via Google Sheets</span>
+            <span>Encrypted Session • Private database per business</span>
           </div>
           <div className="flex items-center gap-3 pt-1 text-[11px] text-slate-400">
             <a href="https://fin-route.site/" target="_blank" rel="noopener noreferrer" className="hover:text-blue-600">FinRoute</a>
