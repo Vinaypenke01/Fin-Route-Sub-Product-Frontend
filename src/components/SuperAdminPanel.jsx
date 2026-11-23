@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import {
   Shield,
   Plus,
@@ -28,6 +28,7 @@ import {
   ExternalLink,
   Server,
   Zap,
+  BookOpen,
   TrendingUp,
   CreditCard,
   Users,
@@ -56,6 +57,10 @@ import {
   clearMasterDbHealthLogs
 } from '../services/masterAuthService';
 import SuperAdminModals from './SuperAdminModals';
+import DeleteTenantModal from './DeleteTenantModal';
+
+// Loaded only when the admin opens the Setup Guide tab
+const TenantSetupGuide = lazy(() => import('./TenantSetupGuide'));
 import SuperAdminHealthLogs from './SuperAdminHealthLogs';
 
 const masterUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_MASTER_SUPABASE_URL) || '';
@@ -95,6 +100,7 @@ export default function SuperAdminPanel({ onBackToApp }) {
 
   // Edit Tenant Full Modal State
   const [editingTenant, setEditingTenant] = useState(null);
+  const [deletingTenant, setDeletingTenant] = useState(null);
   const [editForm, setEditForm] = useState({
     tenantId: '',
     clientName: '',
@@ -803,6 +809,18 @@ export default function SuperAdminPanel({ onBackToApp }) {
                 {healthLogs.length}
               </span>
             </button>
+
+            <button
+              onClick={() => setActiveAdminTab('guide')}
+              className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
+                activeAdminTab === 'guide'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'bg-white text-slate-600 hover:text-slate-900 border border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <BookOpen className="w-4 h-4" />
+              <span>Tenant Setup Guide</span>
+            </button>
           </div>
 
           {activeAdminTab === 'admins' && (
@@ -1106,6 +1124,16 @@ export default function SuperAdminPanel({ onBackToApp }) {
                             >
                               {isActive ? <UserX className="w-3.5 h-3.5" /> : <UserCheck className="w-3.5 h-3.5" />}
                             </button>
+
+                            {/* Delete Tenant Button */}
+                            <button
+                              onClick={() => setDeletingTenant(t)}
+                              className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:text-red-700 hover:bg-red-50 hover:border-red-200 text-xs transition-colors cursor-pointer"
+                              title="Delete Tenant"
+                              aria-label={`Delete tenant ${t.email}`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -1117,6 +1145,15 @@ export default function SuperAdminPanel({ onBackToApp }) {
           </div>
         </div>
       </>
+    ) : activeAdminTab === 'guide' ? (
+      <Suspense fallback={<div className="p-6 text-xs text-slate-500">Loading setup guide...</div>}>
+        <TenantSetupGuide
+          onOpenAddTenant={() => {
+            setActiveAdminTab('tenants');
+            setIsAddTenantModalOpen(true);
+          }}
+        />
+      </Suspense>
     ) : activeAdminTab === 'logs' ? (
       /* Keep-Alive & Database Health Logs Section */
       <SuperAdminHealthLogs
@@ -1328,6 +1365,20 @@ export default function SuperAdminPanel({ onBackToApp }) {
   </main>
 
       {/* Delegated Modals (View, Edit, Add Tenant, Add Admin) */}
+      <DeleteTenantModal
+        key={deletingTenant?.id || 'none'}
+        tenant={deletingTenant}
+        onClose={() => setDeletingTenant(null)}
+        onDeleted={(tenant, res) => {
+          setDeletingTenant(null);
+          if (viewingTenant?.id === tenant.id) setViewingTenant(null);
+          if (editingTenant?.id === tenant.id) setEditingTenant(null);
+          setTenants(prev => prev.filter(x => x.id !== tenant.id));
+          loadTenants();
+          if (res?.warning) alert(`Tenant deleted. Note: ${res.warning}`);
+        }}
+      />
+
       <SuperAdminModals
         // 1. View Tenant
         viewingTenant={viewingTenant}

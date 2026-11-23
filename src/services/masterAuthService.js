@@ -436,6 +436,24 @@ export async function updateTenantFullDetails({
  * Super-Admin: Update a tenant's database URL and Anon Key in master DB.
  * Routes through the authenticated 'admin-tenants' Edge Function.
  */
+/**
+ * Super-Admin: Permanently delete a tenant from the master registry.
+ * The server also removes the operator's sign-in account in the tenant
+ * project and the stored secret key. The tenant's own Supabase project and
+ * ledger data are NOT deleted.
+ */
+export async function deleteTenant(tenantId, confirmEmail) {
+  try {
+    const res = await invokeAdminEdgeFunction('admin-tenants', 'delete_tenant', { tenantId, confirmEmail });
+    if (res?.success) {
+      return { success: true, message: res.message, warning: warningsMessage(res) };
+    }
+    return { success: false, message: res?.message || 'Failed to delete tenant.' };
+  } catch (err) {
+    return { success: false, message: await edgeErrorMessage(err, 'Failed to delete tenant.') };
+  }
+}
+
 export async function updateTenantDbConfig(tenantId, tenantDbUrl, tenantAnonKey, tenantSecretKey) {
   try {
     const res = await invokeAdminEdgeFunction('admin-tenants', 'update_tenant_db', {
