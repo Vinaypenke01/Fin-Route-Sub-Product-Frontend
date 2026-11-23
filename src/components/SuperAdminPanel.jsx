@@ -443,7 +443,7 @@ export default function SuperAdminPanel({ onBackToApp }) {
       email: tenant.email || '',
       phone: tenant.phone || '',
       status: tenant.status || 'active',
-      password: creds?.password_hash || '',
+      password: '',
       tenantDbUrl: dbConfig?.tenant_supabase_url || '',
       tenantAnonKey: dbConfig?.tenant_anon_key || ''
     });
@@ -474,7 +474,7 @@ export default function SuperAdminPanel({ onBackToApp }) {
             email: editForm.email,
             phone: editForm.phone,
             status: editForm.status,
-            master_credentials: [{ password_hash: editForm.password }],
+            master_credentials: prev.master_credentials,
             master_db_configs: [{ tenant_supabase_url: editForm.tenantDbUrl, tenant_anon_key: editForm.tenantAnonKey }]
           }));
         }
@@ -995,7 +995,7 @@ export default function SuperAdminPanel({ onBackToApp }) {
                         <td className="px-4 py-3.5 font-mono">
                           <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200/80 px-2 py-1 rounded-md max-w-fit">
                             <span className="text-xs font-bold text-slate-800">
-                              {isPasswordRevealed ? password : '••••••••'}
+                              {password ? (isPasswordRevealed ? password : '••••••••') : 'Hashed'}
                             </span>
                             <button
                               type="button"

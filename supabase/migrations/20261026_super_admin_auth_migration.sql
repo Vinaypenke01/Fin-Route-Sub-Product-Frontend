@@ -111,17 +111,20 @@ BEGIN
 END $$;
 
 -- 7. Ensure Default Root Super Admin Exists in auth.users & public.user_roles
--- Default: admin@finroute.com / FinRoute@Master2026!
+-- Set v_root_pw to a strong, unique password before running. Never commit it.
 DO $$
 DECLARE
     v_root_email TEXT := 'admin@finroute.com';
     v_root_name TEXT := 'Root Administrator';
-    v_root_pw TEXT := 'FinRoute@Master2026!';
+    v_root_pw TEXT := 'CHANGE_ME_BEFORE_RUNNING';
     v_root_uid UUID;
 BEGIN
     SELECT id INTO v_root_uid FROM auth.users WHERE LOWER(email) = v_root_email;
 
     IF v_root_uid IS NULL THEN
+        IF v_root_pw = 'CHANGE_ME_BEFORE_RUNNING' OR length(v_root_pw) < 12 THEN
+            RAISE EXCEPTION 'Set v_root_pw to a strong password (12+ chars) before running this block.';
+        END IF;
         v_root_uid := gen_random_uuid();
         INSERT INTO auth.users (
             instance_id,

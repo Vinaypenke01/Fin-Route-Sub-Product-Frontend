@@ -60,14 +60,8 @@ export async function authenticateTenant(email, password) {
       return { success: false, message: data?.message || 'Invalid email or password.' };
     }
 
-    let tenantDbUrl = data.tenant_supabase_url;
-    let tenantAnonKey = data.tenant_anon_key;
-
-    // Graceful routing: ensure Sunday Kovuru routes directly to their dedicated Supabase database
-    if (cleanEmail === 'govinduraju6924@gmail.com' && (!tenantDbUrl || tenantDbUrl === masterUrl)) {
-      tenantDbUrl = 'https://bqbtufmyhtzdxbpogivk.supabase.co';
-      tenantAnonKey = 'sb_publishable_z5DGuSdW5h67ZRDNAzv6kA_kxfVxxre';
-    }
+    const tenantDbUrl = data.tenant_supabase_url;
+    const tenantAnonKey = data.tenant_anon_key;
 
     // Record login audit event asynchronously into the tenant dedicated database
     recordTenantLoginAudit(tenantDbUrl, tenantAnonKey, {
@@ -177,31 +171,7 @@ export async function authenticateSuperAdmin(email, password) {
     });
 
     if (authErr || !authData?.user) {
-      // Graceful fallback during migration if GoTrue schema error occurs
-      try {
-        const { data: legacyAdmin } = await masterSupabase
-          .from('master_super_admins')
-          .select('*')
-          .eq('email', cleanEmail)
-          .eq('password_hash', cleanPassword)
-          .maybeSingle();
-
-        if (legacyAdmin && legacyAdmin.role === 'superadmin') {
-          return {
-            success: true,
-            admin: {
-              id: legacyAdmin.id,
-              email: legacyAdmin.email,
-              name: legacyAdmin.name || cleanEmail.split('@')[0],
-              role: 'superadmin',
-            },
-          };
-        }
-      } catch (legErr) {
-        console.warn('Legacy fallback notice:', legErr);
-      }
-
-      return { success: false, message: authErr?.message || 'Invalid administrator credentials.' };
+      return { success: false, message: 'Invalid administrator email or password.' };
     }
 
     const user = authData.user;
@@ -213,20 +183,7 @@ export async function authenticateSuperAdmin(email, password) {
       .eq('user_id', user.id)
       .maybeSingle();
 
-    let role = roleRow?.role;
-
-    // Migration fallback: check master_super_admins
-    if (!role) {
-      const { data: legacyRow } = await masterSupabase
-        .from('master_super_admins')
-        .select('name, role')
-        .eq('email', cleanEmail)
-        .maybeSingle();
-
-      if (legacyRow?.role === 'superadmin') {
-        role = 'superadmin';
-      }
-    }
+    const role = roleRow?.role;
 
     if (role !== 'superadmin') {
       await masterSupabase.auth.signOut();
@@ -331,7 +288,6 @@ export async function getTenantsList() {
           last_health_check
         ),
         master_credentials (
-          password_hash,
           last_login,
           expires_at
         )

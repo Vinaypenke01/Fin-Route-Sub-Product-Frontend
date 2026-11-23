@@ -222,7 +222,7 @@ export default function SuperAdminModals({
                                   Tenant Access Password
                                 </span>
                                 <div className="font-mono text-sm font-extrabold text-slate-900 mt-0.5">
-                                  {showDetailPassword ? (tenantPw || 'No password configured') : (tenantPw ? '••••••••••••' : 'No password')}
+                                  {tenantPw ? (showDetailPassword ? tenantPw : '••••••••••••') : 'Stored as a secure hash (use Edit to reset)'}
                                 </div>
                               </div>
                               <div className="flex items-center gap-1.5">
@@ -662,7 +662,7 @@ export default function SuperAdminModals({
                 <div className="bg-blue-50/50 border border-blue-200/60 rounded-xl p-3.5 space-y-1.5">
                   <div className="flex items-center justify-between">
                     <label className="block text-blue-900 font-bold">
-                      Login Password <span className="text-[11px] font-normal text-slate-500">(Displayed in detail)</span>
+                      Login Password <span className="text-[11px] font-normal text-slate-500">(Optional reset)</span>
                     </label>
                     <button
                       type="button"
@@ -678,13 +678,12 @@ export default function SuperAdminModals({
                       type={showEditPassword ? 'text' : 'password'}
                       value={editForm.password}
                       onChange={(e) => setEditForm(prev => ({ ...prev, password: e.target.value }))}
-                      required
-                      placeholder="Enter new or existing password"
+                      placeholder="Leave blank to keep current password"
                       className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-slate-900 font-mono text-xs focus:outline-none focus:border-blue-500"
                     />
                   </div>
                   <p className="text-[10.5px] text-slate-500">
-                    You can view or update the tenant's login password here.
+                    Passwords are stored hashed and cannot be viewed. Enter a new one to reset it.
                   </p>
                 </div>
 

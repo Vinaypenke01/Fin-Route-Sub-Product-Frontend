@@ -4,18 +4,26 @@
 -- (https://supabase.com/dashboard/project/ubhwoicsjmxslggltvaa/sql)
 -- ==============================================================================
 
--- 1. Remove any broken manual record in auth.users and auth.identities
-DELETE FROM auth.identities WHERE user_id IN (SELECT id FROM auth.users WHERE LOWER(email) = 'admin@finroute.com');
-DELETE FROM auth.users WHERE LOWER(email) = 'admin@finroute.com';
+-- Prefer resetting the password from the dashboard (Authentication -> Users).
+-- If you must run this: set v_password locally to a strong password (12+ chars)
+-- and NEVER commit the edited file.
 
--- 2. Create the user cleanly with all GoTrue required columns populated (no NULL strings)
 DO $$
 DECLARE
     v_user_id UUID := gen_random_uuid();
     v_email TEXT := 'admin@finroute.com';
-    v_password TEXT := 'FinRoute@Master2026!';
+    v_password TEXT := 'CHANGE_ME_BEFORE_RUNNING';
     has_provider_id BOOLEAN;
 BEGIN
+    IF v_password = 'CHANGE_ME_BEFORE_RUNNING' OR length(v_password) < 12 THEN
+        RAISE EXCEPTION 'Set v_password to a strong password (12+ chars) before running.';
+    END IF;
+
+    -- 1. Remove any broken manual record in auth.users and auth.identities
+    DELETE FROM auth.identities WHERE user_id IN (SELECT id FROM auth.users WHERE LOWER(email) = v_email);
+    DELETE FROM auth.users WHERE LOWER(email) = v_email;
+
+    -- 2. Create the user cleanly with all GoTrue required columns populated (no NULL strings)
     -- Check if provider_id column exists in auth.identities
     SELECT EXISTS (
         SELECT 1 FROM information_schema.columns 
