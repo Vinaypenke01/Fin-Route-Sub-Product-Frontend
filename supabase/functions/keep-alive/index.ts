@@ -131,7 +131,7 @@ serve(withCors(async (req: Request) => {
         tenant_id: null,
         tenant_name: 'Master Database',
         tenant_email: 'Central Registry',
-        database_url: supabaseUrl,
+        database_url: Deno.env.get('SUPABASE_URL') || '',
         status: 'online',
         latency_ms: masterLatency,
         error_message: null,
