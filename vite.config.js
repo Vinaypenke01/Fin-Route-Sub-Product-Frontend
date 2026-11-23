@@ -8,5 +8,7 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
-  envPrefix: ['VITE_', 'GOOGLE_', 'AUTH_'],
+  // Only VITE_* vars are bundled into the browser build. Never widen this:
+  // anything exposed here is public to every visitor.
+  envPrefix: ['VITE_'],
 })

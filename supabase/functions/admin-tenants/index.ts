@@ -65,7 +65,6 @@ serve(async (req: Request) => {
               last_health_check
             ),
             master_credentials (
-              password_hash,
               last_login,
               expires_at
             )

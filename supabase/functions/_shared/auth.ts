@@ -83,27 +83,8 @@ export async function verifySuperAdmin(req: Request): Promise<VerifiedSuperAdmin
     throw new Error(`500: Database role verification error: ${roleError.message}`);
   }
 
-  // Also check user_metadata or legacy master_super_admins as fallback for zero-downtime migration
-  let role = roleRow?.role;
-  if (!role && user.email) {
-    const { data: legacyAdmin } = await serviceClient
-      .from('master_super_admins')
-      .select('role')
-      .eq('email', user.email.toLowerCase().trim())
-      .maybeSingle();
-
-    if (legacyAdmin?.role) {
-      role = legacyAdmin.role;
-      // Auto-backfill into user_roles
-      try {
-        await serviceClient
-          .from('user_roles')
-          .insert([{ user_id: user.id, role: legacyAdmin.role }]);
-      } catch (e) {
-        console.warn('user_roles backfill notice:', e);
-      }
-    }
-  }
+  // Role comes only from the protected user_roles table (writable by service_role only)
+  const role = roleRow?.role;
 
   if (role !== 'superadmin') {
     throw new Error('403: Access forbidden. This operation requires an active superadmin role.');

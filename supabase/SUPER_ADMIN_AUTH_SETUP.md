@@ -76,7 +76,7 @@ sequenceDiagram
    - Creates `public.user_roles` and enforces RLS.
    - Creates the `is_super_admin()` security definer function.
    - Migrates existing accounts from `master_super_admins` into Supabase `auth.users` with confirmed email addresses.
-   - Provisions the default root admin (`admin@finroute.com` / `FinRoute@Master2026!`).
+   - Provisions the root admin `admin@finroute.com` with the password you set in `v_root_pw` (edit it locally before running; never commit it).
    - Drops insecure anonymous read policies.
 
 ---
