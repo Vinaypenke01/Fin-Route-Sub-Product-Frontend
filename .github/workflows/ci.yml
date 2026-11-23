@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, Dev]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint, test & build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint (fails on errors, not warnings)
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+      - name: No customer data or secrets in the bundle
+        run: |
+          set -e
+          # Fail if the old bundled borrower list, Apps Script URLs or
+          # server-only keys ever end up in the public build again.
+          # (sb_secret_ must be followed by a real key body, so UI placeholders
+          #  and the Supabase library's prefix check don't trip it.)
+          if grep -rlE "CUST-103|script\.google\.com/macros|sb_secret_[A-Za-z0-9_-]{16,}" dist/; then
+            echo "Sensitive content found in dist/ (see files above)."
+            exit 1
+          fi
+          echo "Bundle check passed."
