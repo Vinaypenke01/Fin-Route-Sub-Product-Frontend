@@ -182,6 +182,16 @@ export function useTrackerSync({
           .catch(err => {
             if (!isMounted) return;
             const errMsg = String(err?.message || err);
+
+            // Tenant DB rejected the request (locked down, session missing or expired):
+            // ask the operator to sign in again instead of showing an empty ledger.
+            const code = String(err?.code || '');
+            if (code === '42501' || code === 'PGRST301' || /permission denied|JWT expired|invalid jwt/i.test(errMsg)) {
+              handleLogout();
+              addToast('Please sign in again to open your private ledger.', 'warning');
+              return;
+            }
+
             const isSleepingOrTimeout = errMsg.includes('Failed to fetch') || errMsg.includes('503') || errMsg.includes('504') || errMsg.includes('timed out');
 
             if (isSleepingOrTimeout && retryAttempts < maxRetries) {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, Suspense, lazy } from 'react';
+import React, { useState, useEffect, useMemo, useRef, Suspense, lazy } from 'react';
 import Header from './components/Header';
 import Footer from './components/Footer';
 import KpiDeck from './components/KpiDeck';
@@ -106,8 +106,8 @@ export default function App() {
     const dbUrl = auth?.tenantDbUrl;
     const anonKey = auth?.tenantAnonKey;
     if (!dbUrl || !anonKey) return null;
-    return getTenantClient(dbUrl, anonKey);
-  }, [auth?.tenantDbUrl, auth?.tenantAnonKey]);
+    return getTenantClient(dbUrl, anonKey, { remember: Boolean(auth?.rememberMe) });
+  }, [auth?.tenantDbUrl, auth?.tenantAnonKey, auth?.rememberMe]);
 
   // Toasts Notification System (Declared early for lifecycle use)
   const [toasts, setToasts] = useState([]);
@@ -175,7 +175,11 @@ export default function App() {
   });
 
   // Handle Logout (Multi-tenant clean state purge)
+  const isLoggingOutRef = useRef(false);
   const handleLogout = () => {
+    // End the operator's tenant DB session (clears its stored tokens locally)
+    isLoggingOutRef.current = true;
+    tenantClient?.auth.signOut({ scope: 'local' }).catch(() => {});
     sessionStorage.removeItem(SESSION_AUTH_KEY);
     localStorage.removeItem(SESSION_AUTH_KEY);
     localStorage.removeItem(GOOGLE_SCRIPT_URL_KEY);
@@ -256,6 +260,31 @@ export default function App() {
     getTenantStorageKey
   });
 
+  // Tenant sign-in guard: when the tenant DB requires a signed-in operator,
+  // a missing or ended session means sign in again (never fall back to the
+  // public key, which the locked-down database rejects).
+  useEffect(() => {
+    if (!auth?.isSupabaseTenant || !auth?.tenantAuthRequired || !tenantClient) return;
+    let cancelled = false;
+    isLoggingOutRef.current = false;
+    tenantClient.auth.getSession().then(({ data }) => {
+      if (!cancelled && !data?.session && !isLoggingOutRef.current) {
+        handleLogout();
+        addToast('Please sign in again to open your private ledger.', 'warning');
+      }
+    });
+    const { data: sub } = tenantClient.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT' && !cancelled && !isLoggingOutRef.current) {
+        handleLogout();
+        addToast('Your secure session ended. Please sign in again.', 'warning');
+      }
+    });
+    return () => {
+      cancelled = true;
+      sub?.subscription?.unsubscribe();
+    };
+  }, [auth?.isSupabaseTenant, auth?.tenantAuthRequired, tenantClient]);
+
   // Real-time Tenant DB Connection Health Monitor (Every 30 seconds)
   useEffect(() => {
     if (!auth?.isSupabaseTenant || !tenantClient) return;
@@ -278,7 +307,7 @@ export default function App() {
   const [isImportSheetOpen, setIsImportSheetOpen] = useState(false);
 
   // Handle Login with Session Expiration & Tenant Isolation
-  const handleLoginSuccess = ({
+  const handleLoginSuccess = async ({
     email,
     password,
     clientName,
@@ -286,6 +315,8 @@ export default function App() {
     sheetUrl: userSheetUrl,
     tenantDbUrl,
     tenantAnonKey,
+    tenantSession,
+    tenantAuthRequired,
     isSupabaseTenant,
     expiry,
     rememberMe,
@@ -294,14 +325,40 @@ export default function App() {
   }) => {
     const sessionDuration = rememberMe ? (7 * 24 * 60 * 60 * 1000) : (24 * 60 * 60 * 1000);
     const resolvedSheetUrl = userSheetUrl || sheetUrl;
+
+    // Supabase tenants: install the tenant DB session BEFORE the ledger loads,
+    // so every query runs as the signed-in operator.
+    if (isSupabaseTenant && tenantDbUrl && tenantAnonKey) {
+      const client = getTenantClient(tenantDbUrl, tenantAnonKey, { remember: !!rememberMe });
+      if (tenantSession?.access_token && tenantSession?.refresh_token) {
+        const { error } = await client.auth.setSession({
+          access_token: tenantSession.access_token,
+          refresh_token: tenantSession.refresh_token,
+        });
+        if (error && tenantAuthRequired) {
+          addToast(`Could not open your private database session: ${error.message}`, 'error');
+          return;
+        }
+      } else {
+        // Legacy public-key mode: drop any stale session left by another operator
+        await client.auth.signOut({ scope: 'local' }).catch(() => {});
+      }
+      import('./services/masterAuthService')
+        .then(m => m.recordTenantLoginAudit(client, { email, clientName, businessName }))
+        .catch(() => {});
+    }
+
     const sessionObj = {
       email,
-      password,
+      // Google Sheets mode still sends the password with each sync request, so it
+      // is kept for those tenants only. Supabase tenants never persist it.
+      password: isSupabaseTenant ? undefined : password,
       clientName: clientName || 'Valued Partner',
       businessName: businessName || 'FinRoute Collect',
       sheetUrl: resolvedSheetUrl,
       tenantDbUrl: tenantDbUrl || null,
       tenantAnonKey: tenantAnonKey || null,
+      tenantAuthRequired: Boolean(tenantAuthRequired),
       isSupabaseTenant: Boolean(isSupabaseTenant),
       expiry: expiry || null,
       loginTimestamp: Date.now(),
@@ -316,7 +373,8 @@ export default function App() {
       sessionStorage.setItem(SESSION_AUTH_KEY, JSON.stringify(sessionObj));
       localStorage.removeItem(SESSION_AUTH_KEY);
     }
-    setAuth(sessionObj);
+    // Password stays in memory only for this tab (used by the one-off Sheets import)
+    setAuth({ ...sessionObj, password });
     setViewMode('app');
     window.location.hash = '#tracker';
 

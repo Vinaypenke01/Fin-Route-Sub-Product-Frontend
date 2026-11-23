@@ -17,7 +17,16 @@ export function getValidStoredSession() {
     const raw = sessionStorage.getItem(SESSION_AUTH_KEY) || localStorage.getItem(SESSION_AUTH_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (!parsed?.email || !parsed?.password) return null;
+    if (!parsed?.email) return null;
+    // Google Sheets sessions need the password for every sync call; Supabase
+    // tenant sessions never store it (the tenant DB session is kept by supabase-js).
+    if (!parsed.isSupabaseTenant && !parsed.password) return null;
+    // Scrub passwords saved by older versions of the app
+    if (parsed.isSupabaseTenant && parsed.password) {
+      delete parsed.password;
+      const target = localStorage.getItem(SESSION_AUTH_KEY) ? localStorage : sessionStorage;
+      target.setItem(SESSION_AUTH_KEY, JSON.stringify(parsed));
+    }
     if (parsed.expiresAt && Date.now() > parsed.expiresAt) {
       sessionStorage.removeItem(SESSION_AUTH_KEY);
       localStorage.removeItem(SESSION_AUTH_KEY);

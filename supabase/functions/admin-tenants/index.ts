@@ -6,16 +6,68 @@
 // ==============================================================================
 // @ts-ignore: Deno standard library import
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
-// @ts-ignore: Supabase JS library import
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1';
 // @ts-ignore: TS extension import in Deno
-import { handleCors, jsonResponse, errorResponse } from '../_shared/cors.ts';
+import { withCors, handleCors, jsonResponse, errorResponse } from '../_shared/cors.ts';
 // @ts-ignore: TS extension import in Deno
 import { verifySuperAdmin } from '../_shared/auth.ts';
+// @ts-ignore: TS extension import in Deno
+import { getTenantDbAccess, getTenantDataClient, syncTenantAuthUser, pingTenantDatabase } from '../_shared/tenant.ts';
 
 declare const Deno: any;
 
-serve(async (req: Request) => {
+// Stores the tenant secret key in Vault and/or keeps the tenant Auth user in
+// sync. Returns human-readable warnings instead of failing the whole request.
+async function applyTenantAuthChanges(
+  serviceClient: any,
+  tenantId: string,
+  opts: { secretKey?: string; email?: string; password?: string; active?: boolean }
+): Promise<string[]> {
+  const warnings: string[] = [];
+  try {
+    if (opts.secretKey) {
+      const { error } = await serviceClient.rpc('admin_set_tenant_secret', {
+        p_tenant_id: tenantId,
+        p_secret: opts.secretKey,
+      });
+      if (error) {
+        warnings.push(`Secret key not saved: ${error.message}`);
+        return warnings;
+      }
+    }
+
+    const access = await getTenantDbAccess(serviceClient, tenantId);
+    if (!access?.secretKey) return warnings; // legacy tenant: nothing to sync
+
+    const wantsSync = Boolean(opts.password) || opts.active !== undefined || Boolean(opts.secretKey) || Boolean(opts.email);
+    if (!wantsSync) return warnings;
+
+    if (!access.authUserId && !opts.password) {
+      warnings.push('Tenant sign-in account will be created on the operator\'s next login (or set a new password now).');
+      return warnings;
+    }
+
+    let email = opts.email;
+    if (!email) {
+      const { data: t } = await serviceClient.from('master_tenants').select('email').eq('id', tenantId).maybeSingle();
+      email = t?.email;
+    }
+    if (!email) {
+      warnings.push('Tenant email not found; tenant sign-in account not updated.');
+      return warnings;
+    }
+
+    await syncTenantAuthUser(serviceClient, access, {
+      email,
+      password: opts.password || undefined,
+      active: opts.active,
+    });
+  } catch (e) {
+    warnings.push(`Tenant sign-in sync failed: ${(e as Error)?.message || e}`);
+  }
+  return warnings;
+}
+
+serve(withCors(async (req: Request) => {
   // 1. Handle CORS Preflight
   const corsRes = handleCors(req);
   if (corsRes) return corsRes;
@@ -61,6 +113,8 @@ serve(async (req: Request) => {
             master_db_configs (
               tenant_supabase_url,
               tenant_anon_key,
+              tenant_secret_id,
+              tenant_auth_required,
               db_status,
               last_health_check
             ),
@@ -72,6 +126,15 @@ serve(async (req: Request) => {
           .order('created_at', { ascending: false });
 
         if (tErr) throw tErr;
+
+        // Expose only whether a secret key is stored, never its Vault id.
+        for (const t of (tenants || []) as any[]) {
+          const cfgs = Array.isArray(t.master_db_configs) ? t.master_db_configs : (t.master_db_configs ? [t.master_db_configs] : []);
+          for (const c of cfgs) {
+            c.has_secret_key = Boolean(c.tenant_secret_id);
+            delete c.tenant_secret_id;
+          }
+        }
 
         return jsonResponse({
           success: true,
@@ -90,6 +153,7 @@ serve(async (req: Request) => {
         const password = String(payload.password || '').trim();
         const tenantDbUrl = String(payload.tenantDbUrl || '').trim();
         const tenantAnonKey = String(payload.tenantAnonKey || '').trim();
+        const tenantSecretKey = String(payload.tenantSecretKey || '').trim();
         const expiresAt = payload.expiresAt ? new Date(payload.expiresAt).toISOString() : null;
 
         if (!email || !clientName || !password) {
@@ -136,7 +200,16 @@ serve(async (req: Request) => {
           if (dErr) throw dErr;
         }
 
-        return jsonResponse({ success: true, tenant });
+        const warnings = (tenantDbUrl && tenantAnonKey && tenantSecretKey)
+          ? await applyTenantAuthChanges(serviceClient, tenant.id, {
+              secretKey: tenantSecretKey,
+              email,
+              password,
+              active: true,
+            })
+          : [];
+
+        return jsonResponse({ success: true, tenant, warnings });
       }
 
       // ------------------------------------------------------------------------
@@ -154,7 +227,11 @@ serve(async (req: Request) => {
           .eq('id', tenantId);
 
         if (error) throw error;
-        return jsonResponse({ success: true, message: `Tenant status updated to ${status}.` });
+
+        // Block / unblock the operator's tenant sign-in to match the status.
+        const warnings = await applyTenantAuthChanges(serviceClient, tenantId, { active: status === 'active' });
+
+        return jsonResponse({ success: true, message: `Tenant status updated to ${status}.`, warnings });
       }
 
       // ------------------------------------------------------------------------
@@ -171,10 +248,19 @@ serve(async (req: Request) => {
           password,
           tenantDbUrl,
           tenantAnonKey,
+          tenantSecretKey,
+          tenantAuthRequired,
         } = payload;
 
         if (!tenantId) {
           return errorResponse('tenantId is required.', 400);
+        }
+
+        if (tenantAuthRequired === true && !String(tenantSecretKey || '').trim()) {
+          const existing = await getTenantDbAccess(serviceClient, tenantId).catch(() => null);
+          if (!existing?.secretKey) {
+            return errorResponse('Save the tenant secret key before requiring tenant sign-in.', 400);
+          }
         }
 
         const cleanEmail = email ? String(email).trim().toLowerCase() : undefined;
@@ -231,7 +317,21 @@ serve(async (req: Request) => {
           }
         }
 
-        return jsonResponse({ success: true, message: 'Tenant updated successfully.' });
+        if (typeof tenantAuthRequired === 'boolean') {
+          await serviceClient
+            .from('master_db_configs')
+            .update({ tenant_auth_required: tenantAuthRequired, updated_at: new Date().toISOString() })
+            .eq('tenant_id', tenantId);
+        }
+
+        const warnings = await applyTenantAuthChanges(serviceClient, tenantId, {
+          secretKey: String(tenantSecretKey || '').trim() || undefined,
+          email: cleanEmail,
+          password: password ? String(password).trim() : undefined,
+          active: status ? status === 'active' : undefined,
+        });
+
+        return jsonResponse({ success: true, message: 'Tenant updated successfully.', warnings });
       }
 
       // ------------------------------------------------------------------------
@@ -253,7 +353,12 @@ serve(async (req: Request) => {
           }, { onConflict: 'tenant_id' });
 
         if (error) throw error;
-        return jsonResponse({ success: true, message: 'Database configuration updated.' });
+
+        const warnings = payload.tenantSecretKey
+          ? await applyTenantAuthChanges(serviceClient, tenantId, { secretKey: String(payload.tenantSecretKey).trim() })
+          : [];
+
+        return jsonResponse({ success: true, message: 'Database configuration updated.', warnings });
       }
 
       // ------------------------------------------------------------------------
@@ -431,13 +536,15 @@ serve(async (req: Request) => {
       // 9. TENANT LIVE STATS & PING (SERVER-SIDE PROXY)
       // ------------------------------------------------------------------------
       case 'tenant_stats': {
-        const { tenantDbUrl, tenantAnonKey } = payload;
-        if (!tenantDbUrl || !tenantAnonKey) {
-          return errorResponse('tenantDbUrl and tenantAnonKey are required.', 400);
+        // DB location and keys are looked up server-side from the tenant id;
+        // the browser never chooses which URL the server connects to.
+        const statsAccess = payload.tenantId ? await getTenantDbAccess(serviceClient, String(payload.tenantId)) : null;
+        if (!statsAccess) {
+          return jsonResponse({ connected: false, message: 'Tenant database is not configured.' });
         }
 
         const startTime = performance.now();
-        const tenantClient = createClient(tenantDbUrl, tenantAnonKey, { auth: { persistSession: false } });
+        const tenantClient = getTenantDataClient(statsAccess);
 
         const [
           { data: customers, error: cErr },
@@ -478,12 +585,12 @@ serve(async (req: Request) => {
       // 10. TENANT AUDIT LOGS (SERVER-SIDE PROXY)
       // ------------------------------------------------------------------------
       case 'tenant_logs': {
-        const { tenantDbUrl, tenantAnonKey, tenantMetadata } = payload;
-        if (!tenantDbUrl || !tenantAnonKey) {
-          return errorResponse('tenantDbUrl and tenantAnonKey are required.', 400);
+        const logsAccess = payload.tenantId ? await getTenantDbAccess(serviceClient, String(payload.tenantId)) : null;
+        if (!logsAccess) {
+          return jsonResponse({ success: false, message: 'Tenant database is not configured.', logs: [] });
         }
 
-        const tenantClient = createClient(tenantDbUrl, tenantAnonKey, { auth: { persistSession: false } });
+        const tenantClient = getTenantDataClient(logsAccess);
 
         const [
           { data: directLogs },
@@ -564,68 +671,11 @@ serve(async (req: Request) => {
         if (masterErr) throw masterErr;
 
         const allTenants = tenantRows || [];
-        const pingPromises = allTenants.map(async (t: any) => {
-          const dbConfig = Array.isArray(t.master_db_configs) ? t.master_db_configs[0] : t.master_db_configs;
-          const dbUrl = (dbConfig?.tenant_supabase_url || '').trim();
-          const anonKey = (dbConfig?.tenant_anon_key || '').trim();
-          const tenantName = t.client_name || t.business_name || 'Tenant';
-
-          if (!dbUrl || !anonKey) {
-            return {
-              tenantId: t.id,
-              name: tenantName,
-              email: t.email,
-              dbUrl: '',
-              status: 'unconfigured',
-              latencyMs: null,
-              errorMessage: 'No dedicated database URL configured',
-            };
-          }
-
-          const tenantStart = performance.now();
-          try {
-            const tenantClient = createClient(dbUrl, anonKey, { auth: { persistSession: false } });
-            const pingPromise = Promise.race([
-              tenantClient.from('tenant_settings').select('id').limit(1),
-              new Promise((_, reject) => setTimeout(() => reject(new Error('Connection timed out (>6000ms)')), 6000)),
-            ]);
-
-            const result: any = await pingPromise;
-            const latency = Math.round(performance.now() - tenantStart);
-
-            if (result?.error) {
-              const fallback = await tenantClient.from('weeks').select('id').limit(1);
-              if (fallback.error && !fallback.error.message.includes('42P01')) {
-                throw fallback.error;
-              }
-            }
-
-            return {
-              tenantId: t.id,
-              name: tenantName,
-              email: t.email,
-              dbUrl,
-              status: 'online',
-              latencyMs: latency,
-            };
-          } catch (err: any) {
-            const latency = Math.round(performance.now() - tenantStart);
-            const errMsg = String(err?.message || err);
-            const isSleeping = errMsg.includes('timed out') || errMsg.includes('503') || errMsg.includes('504') || errMsg.includes('Failed to fetch');
-
-            return {
-              tenantId: t.id,
-              name: tenantName,
-              email: t.email,
-              dbUrl,
-              status: isSleeping ? 'sleeping' : 'error',
-              latencyMs: latency,
-              errorMessage: errMsg,
-            };
-          }
-        });
-
-        const pingResults = await Promise.all(pingPromises);
+        const pingResults = await Promise.all(allTenants.map((t: any) => pingTenantDatabase(serviceClient, {
+          id: t.id,
+          name: t.client_name || t.business_name || "Tenant",
+          email: t.email,
+        })));
         const nowIso = new Date().toISOString();
         const masterUrl = Deno.env.get('SUPABASE_URL') || '';
         const logRows: any[] = [
@@ -725,4 +775,4 @@ serve(async (req: Request) => {
     const message = err instanceof Error ? err.message : 'Internal server error';
     return errorResponse(message, 500);
   }
-});
+}));

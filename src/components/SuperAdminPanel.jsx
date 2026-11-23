@@ -104,7 +104,10 @@ export default function SuperAdminPanel({ onBackToApp }) {
     status: 'active',
     password: '',
     tenantDbUrl: '',
-    tenantAnonKey: ''
+    tenantAnonKey: '',
+    tenantSecretKey: '',
+    hasSecretKey: false,
+    tenantAuthRequired: false
   });
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [editError, setEditError] = useState(null);
@@ -125,6 +128,7 @@ export default function SuperAdminPanel({ onBackToApp }) {
   const [newPassword, setNewPassword] = useState('');
   const [newDbUrl, setNewDbUrl] = useState('');
   const [newAnonKey, setNewAnonKey] = useState('');
+  const [newSecretKey, setNewSecretKey] = useState('');
   const [createError, setCreateError] = useState(null);
   const [isCreating, setIsCreating] = useState(false);
 
@@ -345,7 +349,8 @@ export default function SuperAdminPanel({ onBackToApp }) {
       businessName: newBusinessName,
       password: newPassword,
       tenantDbUrl: newDbUrl,
-      tenantAnonKey: newAnonKey
+      tenantAnonKey: newAnonKey,
+      tenantSecretKey: newSecretKey
     });
 
     if (res.success) {
@@ -355,6 +360,8 @@ export default function SuperAdminPanel({ onBackToApp }) {
       setNewPassword('');
       setNewDbUrl('');
       setNewAnonKey('');
+      setNewSecretKey('');
+      if (res.warning) alert(`Tenant created. Note: ${res.warning}`);
       loadTenants();
     } else {
       setCreateError(res.message || 'Failed to create tenant.');
@@ -378,7 +385,6 @@ export default function SuperAdminPanel({ onBackToApp }) {
     setEditDbMsg(null);
 
     const dbConfig = Array.isArray(tenant.master_db_configs) ? tenant.master_db_configs[0] : tenant.master_db_configs;
-    const creds = Array.isArray(tenant.master_credentials) ? tenant.master_credentials[0] : tenant.master_credentials;
     const url = dbConfig?.tenant_supabase_url || '';
     const key = dbConfig?.tenant_anon_key || '';
 
@@ -388,19 +394,13 @@ export default function SuperAdminPanel({ onBackToApp }) {
     // Fetch real-time live stats from tenant DB
     if (url && key) {
       setIsLoadingStats(true);
-      const stats = await fetchTenantStats(url, key);
+      const stats = await fetchTenantStats(tenant.id);
       setTenantStats(stats);
       setIsLoadingStats(false);
 
-      // Fetch logs with tenant user login metadata
+      // Fetch logs (read server-side with the tenant secret key)
       setIsLoadingLogs(true);
-      const logRes = await fetchTenantAuditLogs(url, key, {
-        email: tenant.email,
-        clientName: tenant.client_name,
-        businessName: tenant.business_name,
-        lastLogin: creds?.last_login || null,
-        registeredAt: tenant.created_at
-      });
+      const logRes = await fetchTenantAuditLogs(tenant.id);
       setTenantLogs(logRes.logs || []);
       setIsLoadingLogs(false);
     } else {
@@ -413,19 +413,12 @@ export default function SuperAdminPanel({ onBackToApp }) {
   const handleRefreshLogs = async () => {
     if (!viewingTenant) return;
     const dbConfig = Array.isArray(viewingTenant.master_db_configs) ? viewingTenant.master_db_configs[0] : viewingTenant.master_db_configs;
-    const creds = Array.isArray(viewingTenant.master_credentials) ? viewingTenant.master_credentials[0] : viewingTenant.master_credentials;
     const url = dbConfig?.tenant_supabase_url || editDbUrl;
     const key = dbConfig?.tenant_anon_key || editAnonKey;
     if (!url || !key) return;
 
     setIsLoadingLogs(true);
-    const logRes = await fetchTenantAuditLogs(url, key, {
-      email: viewingTenant.email,
-      clientName: viewingTenant.client_name,
-      businessName: viewingTenant.business_name,
-      lastLogin: creds?.last_login || null,
-      registeredAt: viewingTenant.created_at
-    });
+    const logRes = await fetchTenantAuditLogs(viewingTenant.id);
     setTenantLogs(logRes.logs || []);
     setIsLoadingLogs(false);
   };
@@ -433,7 +426,6 @@ export default function SuperAdminPanel({ onBackToApp }) {
   // Open Edit Tenant Modal
   const handleOpenEditTenant = (tenant) => {
     const dbConfig = Array.isArray(tenant.master_db_configs) ? tenant.master_db_configs[0] : tenant.master_db_configs;
-    const creds = Array.isArray(tenant.master_credentials) ? tenant.master_credentials[0] : tenant.master_credentials;
 
     setEditingTenant(tenant);
     setEditForm({
@@ -445,7 +437,10 @@ export default function SuperAdminPanel({ onBackToApp }) {
       status: tenant.status || 'active',
       password: '',
       tenantDbUrl: dbConfig?.tenant_supabase_url || '',
-      tenantAnonKey: dbConfig?.tenant_anon_key || ''
+      tenantAnonKey: dbConfig?.tenant_anon_key || '',
+      tenantSecretKey: '',
+      hasSecretKey: Boolean(dbConfig?.has_secret_key),
+      tenantAuthRequired: Boolean(dbConfig?.tenant_auth_required)
     });
     setEditError(null);
     setEditSuccessMsg(null);
@@ -461,7 +456,9 @@ export default function SuperAdminPanel({ onBackToApp }) {
 
     const res = await updateTenantFullDetails(editForm);
     if (res.success) {
-      setEditSuccessMsg('Tenant details and credentials updated successfully!');
+      setEditSuccessMsg(res.warning
+        ? `Saved. Note: ${res.warning}`
+        : 'Tenant details and credentials updated successfully!');
       setTimeout(() => {
         setEditingTenant(null);
         loadTenants();
@@ -497,7 +494,7 @@ export default function SuperAdminPanel({ onBackToApp }) {
       setIsEditingDb(false);
       loadTenants();
       // Refresh stats
-      const stats = await fetchTenantStats(editDbUrl, editAnonKey);
+      const stats = await fetchTenantStats(viewingTenant.id);
       setTenantStats(stats);
     } else {
       setEditDbMsg({ type: 'error', text: res.message || 'Failed to update database config.' });
@@ -1389,6 +1386,8 @@ export default function SuperAdminPanel({ onBackToApp }) {
         setNewDbUrl={setNewDbUrl}
         newAnonKey={newAnonKey}
         setNewAnonKey={setNewAnonKey}
+        newSecretKey={newSecretKey}
+        setNewSecretKey={setNewSecretKey}
         createError={createError}
         isCreating={isCreating}
         handleCreateTenant={handleCreateTenant}

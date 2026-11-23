@@ -13,11 +13,18 @@ jobs:
 
     steps:
       - name: Send Keep-Alive Heartbeat to FinRoute Master Edge Function
+        # Requires repo secret SUPABASE_MASTER_PUBLISHABLE_KEY
+        # (GitHub -> Settings -> Secrets and variables -> Actions)
+        env:
+          SUPABASE_KEY: ${{ secrets.SUPABASE_MASTER_PUBLISHABLE_KEY }}
         run: |
+          if [ -z "$SUPABASE_KEY" ]; then
+            echo "Missing secret SUPABASE_MASTER_PUBLISHABLE_KEY"; exit 1
+          fi
           echo "Sending keep-alive request to Master Edge Function..."
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
             "https://ubhwoicsjmxslggltvaa.supabase.co/functions/v1/keep-alive" \
-            -H "apikey: sb_publishable_raPNiMJx4rlabjgq3VGQAw_HSKpJ0P5" \
+            -H "apikey: $SUPABASE_KEY" \
             -H "Content-Type: application/json")
 
           HTTP_BODY=$(echo "$RESPONSE" | sed '$d')

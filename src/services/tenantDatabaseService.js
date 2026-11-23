@@ -3,12 +3,39 @@ import { createClient } from '@supabase/supabase-js';
 // Cache client instances per URL to avoid re-instantiation overhead
 const clientCache = new Map();
 
-export function getTenantClient(url, anonKey) {
+function tenantStorageKey(url) {
+  try {
+    return `finroute-tenant-auth-${new URL(url).host}`;
+  } catch {
+    return `finroute-tenant-auth-${url}`;
+  }
+}
+
+function pickStorage(remember) {
+  try {
+    return remember ? window.localStorage : window.sessionStorage;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Tenant DB client. When the operator signed in through the tenant-login Edge
+ * Function, this client carries their tenant Auth session (kept in local or
+ * session storage to match "remember me") and refreshes it automatically.
+ */
+export function getTenantClient(url, anonKey, { remember = false } = {}) {
   if (!url || !anonKey) return null;
-  const key = `${url}::${anonKey}`;
+  const key = `${url}::${anonKey}::${remember ? 'local' : 'session'}`;
   if (!clientCache.has(key)) {
     const client = createClient(url, anonKey, {
-      auth: { persistSession: false },
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: false,
+        storageKey: tenantStorageKey(url),
+        storage: pickStorage(remember),
+      },
       db: { schema: 'public' }
     });
     clientCache.set(key, client);
