@@ -16,7 +16,7 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   retries: process.env.CI ? 1 : 0,
   workers: 1, // signed-in tests share one test tenant
-  reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
+  reporter: process.env.CI ? [['list'], ['github'], ['html', { open: 'never' }]] : 'list', // 'github' turns failures into annotations
   use: {
     baseURL,
     trace: 'retain-on-failure',
