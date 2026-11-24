@@ -24,6 +24,7 @@ const ArchiveTable = lazy(() => import('./components/ArchiveTable'));
 const LandingPage = lazy(() => import('./components/LandingPage'));
 const SuperAdminPanel = lazy(() => import('./components/SuperAdminPanel'));
 const ChangeHistoryModal = lazy(() => import('./components/ChangeHistoryModal'));
+const ChangePasswordModal = lazy(() => import('./components/ChangePasswordModal'));
 
 import {
   SESSION_AUTH_KEY,
@@ -239,6 +240,7 @@ export default function App() {
   const [isArchiveOpen, setIsArchiveOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isDownloadingBackup, setIsDownloadingBackup] = useState(false);
+  const [isPasswordOpen, setIsPasswordOpen] = useState(false);
   const [isRenewModalOpen, setIsRenewModalOpen] = useState(false);
   const [renewTargetCustomer, setRenewTargetCustomer] = useState(null);
   const [villageContext, setVillageContext] = useState(null);
@@ -383,6 +385,7 @@ export default function App() {
     tenantSession,
     tenantAuthRequired,
     deviceSessionManaged,
+    mustChangePassword,
     expiry,
     rememberMe
   }) => {
@@ -419,6 +422,7 @@ export default function App() {
       tenantAnonKey: tenantAnonKey || null,
       tenantAuthRequired: Boolean(tenantAuthRequired),
       deviceSessionManaged: Boolean(deviceSessionManaged),
+      mustChangePassword: Boolean(mustChangePassword),
       isSupabaseTenant: true,
       expiry: expiry || null,
       loginTimestamp: Date.now(),
@@ -1078,6 +1082,7 @@ export default function App() {
         onOpenHistory={tenantClient ? () => setIsHistoryOpen(true) : undefined}
         onDownloadBackup={tenantClient ? handleDownloadBackup : undefined}
         isDownloadingBackup={isDownloadingBackup}
+        onChangePassword={auth?.deviceSessionManaged ? () => setIsPasswordOpen(true) : undefined}
         onDownloadPDF={handleDownloadPDF}
         isGeneratingPDF={isGeneratingPDF}
         onExportCSV={handleExportCSV}
@@ -1203,6 +1208,32 @@ export default function App() {
             tenantClient={tenantClient}
             customers={customers}
             weeks={weeks}
+          />
+        </Suspense>
+      )}
+
+      {(isPasswordOpen || auth?.mustChangePassword) && (
+        <Suspense fallback={null}>
+          <ChangePasswordModal
+            email={auth?.email}
+            forced={Boolean(auth?.mustChangePassword)}
+            onClose={() => setIsPasswordOpen(false)}
+            changePassword={async (current, next) => {
+              const m = await import('./services/masterAuthService');
+              return m.changeTenantPassword(auth?.email, current, next);
+            }}
+            onChanged={() => {
+              setIsPasswordOpen(false);
+              setAuth(prev => {
+                const updated = { ...prev, mustChangePassword: false };
+                try {
+                  const store = localStorage.getItem(SESSION_AUTH_KEY) ? localStorage : sessionStorage;
+                  store.setItem(SESSION_AUTH_KEY, JSON.stringify(updated));
+                } catch { /* ignore */ }
+                return updated;
+              });
+              addToast('Password changed. Use the new password next time you sign in.', 'success');
+            }}
           />
         </Suspense>
       )}

@@ -853,7 +853,7 @@ export default function SuperAdminModals({
                   <label className="block text-slate-700 font-semibold mb-1">Initial Password *</label>
                   <input
                     type="text"
-                    placeholder="SecretPass@123"
+                    placeholder="At least 10 characters"
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                     required

@@ -1,5 +1,5 @@
 import React from 'react';
-import { UserPlus, CalendarPlus, CalendarMinus, Archive, FileDown, LogOut, Loader2, FileSpreadsheet, History, DatabaseBackup } from 'lucide-react';
+import { UserPlus, CalendarPlus, CalendarMinus, Archive, FileDown, LogOut, Loader2, FileSpreadsheet, History, DatabaseBackup, KeyRound } from 'lucide-react';
 import { t, AVAILABLE_LANGUAGES } from '../utils/translations';
 
 export default function Header({
@@ -12,6 +12,7 @@ export default function Header({
   onOpenHistory,
   onDownloadBackup,
   isDownloadingBackup = false,
+  onChangePassword,
   onDownloadPDF,
   isGeneratingPDF = false,
   onExportCSV,
@@ -178,6 +179,17 @@ export default function Header({
             >
               {isDownloadingBackup ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <DatabaseBackup className="w-3.5 h-3.5 text-slate-600" />}
               <span>{language === 'te' ? 'బ్యాకప్' : 'My data'}</span>
+            </button>
+          )}
+
+          {onChangePassword && (
+            <button
+              onClick={onChangePassword}
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+              title="Change your password"
+            >
+              <KeyRound className="w-3.5 h-3.5 text-slate-600" />
+              <span>{language === 'te' ? 'పాస్‌వర్డ్' : 'Password'}</span>
             </button>
           )}
 

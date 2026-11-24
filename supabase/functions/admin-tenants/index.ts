@@ -12,6 +12,8 @@ import { withCors, handleCors, jsonResponse, errorResponse } from '../_shared/co
 import { verifySuperAdmin } from '../_shared/auth.ts';
 // @ts-ignore: TS extension import in Deno
 import { getTenantDbAccess, getTenantDataClient, syncTenantAuthUser, pingTenantDatabase } from '../_shared/tenant.ts';
+// @ts-ignore: TS extension import in Deno
+import { passwordProblem } from '../_shared/password.ts';
 
 declare const Deno: any;
 
@@ -164,6 +166,10 @@ serve(withCors(async (req: Request) => {
         if (!email || !clientName || !password) {
           return errorResponse('Email, client name, and password are required.', 400);
         }
+        const newTenantPwProblem = passwordProblem(password, email);
+        if (newTenantPwProblem) {
+          return errorResponse(`Password: ${newTenantPwProblem}`, 400);
+        }
 
         // 1. Insert Tenant
         const { data: tenant, error: tErr } = await serviceClient
@@ -259,6 +265,13 @@ serve(withCors(async (req: Request) => {
 
         if (!tenantId) {
           return errorResponse('tenantId is required.', 400);
+        }
+
+        if (password && String(password).trim()) {
+          const updPwProblem = passwordProblem(String(password).trim(), String(email || ''));
+          if (updPwProblem) {
+            return errorResponse(`Password: ${updPwProblem}`, 400);
+          }
         }
 
         if (tenantAuthRequired === true && !String(tenantSecretKey || '').trim()) {
@@ -572,6 +585,10 @@ serve(withCors(async (req: Request) => {
 
         if (!email || !password || !name) {
           return errorResponse('Full name, email address, and initial password are required.', 400);
+        }
+        const adminPwProblem = passwordProblem(password, email);
+        if (adminPwProblem) {
+          return errorResponse(`Password: ${adminPwProblem}`, 400);
         }
 
         // 1. Create user in Supabase Auth with auto-confirmed email

@@ -60,6 +60,7 @@ import {
 import SuperAdminModals from './SuperAdminModals';
 import DeleteTenantModal from './DeleteTenantModal';
 import TenantVersionBadge from './TenantVersionBadge';
+import { passwordProblem } from '../../supabase/functions/_shared/password.ts';
 import ActiveSessionInfo from './ActiveSessionInfo';
 
 // Loaded only when the admin opens the Setup Guide tab
@@ -256,9 +257,14 @@ export default function SuperAdminPanel({ onBackToApp }) {
 
   const handleCreateAdmin = async (e) => {
     e.preventDefault();
-    setIsCreatingAdmin(true);
     setAddAdminError(null);
     setAddAdminSuccess(null);
+    const adminPwProblem = passwordProblem(String(newAdminForm.password || '').trim(), newAdminForm.email);
+    if (adminPwProblem) {
+      setAddAdminError(`Password: ${adminPwProblem}`);
+      return;
+    }
+    setIsCreatingAdmin(true);
 
     const res = await createSuperAdmin(newAdminForm);
     if (res.success) {
@@ -352,6 +358,11 @@ export default function SuperAdminPanel({ onBackToApp }) {
 
   const handleCreateTenant = async (e) => {
     e.preventDefault();
+    const tenantPwProblem = passwordProblem(String(newPassword || '').trim(), newEmail);
+    if (tenantPwProblem) {
+      setCreateError(`Password: ${tenantPwProblem}`);
+      return;
+    }
     setIsCreating(true);
     setCreateError(null);
 
@@ -462,6 +473,13 @@ export default function SuperAdminPanel({ onBackToApp }) {
   // Save Tenant Full Edits
   const handleSaveEditTenant = async (e) => {
     e.preventDefault();
+    if (editForm.password && editForm.password.trim()) {
+      const editPwProblem = passwordProblem(editForm.password.trim(), editForm.email);
+      if (editPwProblem) {
+        setEditError(`New password: ${editPwProblem}`);
+        return;
+      }
+    }
     setIsSavingEdit(true);
     setEditError(null);
     setEditSuccessMsg(null);

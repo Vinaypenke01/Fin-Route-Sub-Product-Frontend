@@ -20,6 +20,8 @@ import { getServiceClient } from '../_shared/auth.ts';
 import { getTenantDbAccess, getTenantAnonClient, syncTenantAuthUser } from '../_shared/tenant.ts';
 // @ts-ignore: TS extension import in Deno
 import { decideLogin, inUseMessage, isValidDeviceSessionId, cleanDeviceLabel } from '../_shared/session.ts';
+// @ts-ignore: TS extension import in Deno
+import { passwordProblem } from '../_shared/password.ts';
 
 serve(withCors(async (req: Request) => {
   if (req.method !== 'POST') {
@@ -97,6 +99,9 @@ serve(withCors(async (req: Request) => {
       tenantAnonKey: verify.tenant_anon_key,
       tenantAuthRequired: Boolean(verify.tenant_auth_required),
       expiresAt: verify.expires_at,
+      // Old passwords that don't meet the current rule still log in, but the
+      // operator must choose a new one before using the app.
+      mustChangePassword: passwordProblem(password, email) !== null,
     };
 
     // 2. Tenant project sign-in

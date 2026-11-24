@@ -72,6 +72,7 @@ export async function authenticateTenant(email, password) {
         tenantAuthRequired: Boolean(data.tenantAuthRequired),
         tenantSession: data.session || null,
         deviceSessionManaged: true,
+        mustChangePassword: Boolean(data.mustChangePassword),
         expiresAt: data.expiresAt ? new Date(data.expiresAt).getTime() : null,
       };
     }
@@ -503,6 +504,19 @@ export async function runTenantBackup(tenantId) {
     return { success: false, message: r?.error || data?.message || 'Backup failed.' };
   } catch (err) {
     return { success: false, message: err?.message || 'Backup failed.' };
+  }
+}
+
+/** Operator: change own password (needs the current one). */
+export async function changeTenantPassword(email, currentPassword, newPassword) {
+  try {
+    const { data, error } = await masterSupabase.functions.invoke('tenant-session', {
+      body: { action: 'change_password', email, deviceSessionId: getDeviceSessionId(), currentPassword, newPassword },
+    });
+    if (error) return { success: false, message: await edgeErrorMessage(error, 'Could not change the password.') };
+    return { success: Boolean(data?.success), message: data?.message };
+  } catch (err) {
+    return { success: false, message: err?.message || 'Could not change the password. Check your internet connection.' };
   }
 }
 
