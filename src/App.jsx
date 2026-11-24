@@ -7,6 +7,7 @@ import TrackerTable from './components/TrackerTable';
 import AppModals from './components/AppModals';
 import ToastContainer from './components/Toast';
 import LoadingScreen, { TableSkeleton } from './components/LoadingScreen';
+import ErrorBoundary from './components/ErrorBoundary';
 import { getCustomerTotalPaid, getCustomerBalance, getCustomerStatus, parseDate, recalculateWeeksFromWeekOne } from './utils/formatters';
 import { normalizeCustomers, getCustomerVillageName } from './utils/customerNormalization';
 import { generatePdfReport } from './utils/generatePdfReport';
@@ -98,6 +99,30 @@ export default function App() {
       setToasts(prev => prev.filter(t => t.id !== id));
     }, 3200);
   };
+
+  // Unexpected errors outside React rendering (e.g. a failed promise nobody
+  // handled): tell the user calmly instead of failing silently.
+  useEffect(() => {
+    let lastShown = 0;
+    const notify = (reason) => {
+      console.error('Unhandled error:', reason);
+      if (Date.now() - lastShown < 5000) return; // avoid a burst of identical toasts
+      lastShown = Date.now();
+      setToasts(prev => [...prev.slice(-3), {
+        id: Date.now() + Math.random(),
+        message: 'Something didn’t work. Your saved data is safe; please try that again.',
+        type: 'error'
+      }]);
+    };
+    const onRejection = (e) => notify(e.reason);
+    const onError = (e) => notify(e.error || e.message);
+    window.addEventListener('unhandledrejection', onRejection);
+    window.addEventListener('error', onError);
+    return () => {
+      window.removeEventListener('unhandledrejection', onRejection);
+      window.removeEventListener('error', onError);
+    };
+  }, []);
 
   // Dynamic tenant-scoped data initialization
   const initialSession = getValidStoredSession();
@@ -956,7 +981,7 @@ export default function App() {
         customers: filteredCustomers.length > 0 && searchQuery ? filteredCustomers : customers,
         weeklyReconciliation,
         reconciliationComputed,
-        clientName: auth?.clientName || 'Sunday Kovuru'
+        clientName: auth?.businessName || auth?.clientName || 'FinRoute'
       });
       if (res?.success) {
         addToast(`Exported ${res.fileName} with Telugu records & reconciliation!`, 'success');
@@ -1067,33 +1092,35 @@ export default function App() {
         language={language}
       />
 
-      {/* 4. Tab Views */}
-      {activeTab === 'tracker' ? (
-        <TrackerTable
-          weeks={weeks}
-          customers={filteredCustomers}
-          weeklyReconciliation={weeklyReconciliation}
-          reconciliationComputed={reconciliationComputed}
-          archive={archive}
-          onUpdateCustomerField={handleUpdateCustomerField}
-          onUpdatePayment={handleUpdatePayment}
-          onUpdateRecon={handleUpdateRecon}
-          onDeleteCustomer={handleDeleteCustomer}
-          onOpenRenewCustomer={handleOpenRenewCustomer}
-          onOpenAddCustomerUnderVillage={handleOpenAddCustomerUnderVillage}
-          onMoveRow={handleMoveRow}
-          onUpdateWeekOneDate={handleUpdateWeekOneDate}
-          language={language}
-        />
-      ) : (
-        <Suspense fallback={<TableSkeleton />}>
-          <ArchiveTable
+      {/* 4. Tab Views (a crash here keeps the header and saved data usable) */}
+      <ErrorBoundary variant="section" key={activeTab}>
+        {activeTab === 'tracker' ? (
+          <TrackerTable
+            weeks={weeks}
+            customers={filteredCustomers}
+            weeklyReconciliation={weeklyReconciliation}
+            reconciliationComputed={reconciliationComputed}
             archive={archive}
-            onRestore={handleRestoreArchived}
-            onDeleteArchived={handleDeleteArchived}
+            onUpdateCustomerField={handleUpdateCustomerField}
+            onUpdatePayment={handleUpdatePayment}
+            onUpdateRecon={handleUpdateRecon}
+            onDeleteCustomer={handleDeleteCustomer}
+            onOpenRenewCustomer={handleOpenRenewCustomer}
+            onOpenAddCustomerUnderVillage={handleOpenAddCustomerUnderVillage}
+            onMoveRow={handleMoveRow}
+            onUpdateWeekOneDate={handleUpdateWeekOneDate}
+            language={language}
           />
-        </Suspense>
-      )}
+        ) : (
+          <Suspense fallback={<TableSkeleton />}>
+            <ArchiveTable
+              archive={archive}
+              onRestore={handleRestoreArchived}
+              onDeleteArchived={handleDeleteArchived}
+            />
+          </Suspense>
+        )}
+      </ErrorBoundary>
 
       {/* 5. Modals & Dialogs */}
       <AppModals

@@ -16,6 +16,7 @@ import {
 // Loaded straight from the repo so the guide always shows the real scripts.
 import tenantTemplateSql from '../../supabase/supabase_tenant_template.sql?raw';
 import tenantLockdownSql from '../../supabase/tenant_lockdown.sql?raw';
+import { TENANT_UPDATES, LATEST_TENANT_VERSION } from '../config/tenantUpdates';
 
 const SITE_URL = 'https://sub-project.fin-route.site';
 const MASTER_REF = 'ubhwoicsjmxslggltvaa';
@@ -329,7 +330,7 @@ export default function TenantSetupGuide({ onOpenAddTenant }) {
       <Step number={1} title="Create the tenant's Supabase project" time="3 minutes" done={!!done.create} onToggle={() => toggle('create')}>
         <ol className="list-decimal pl-5 space-y-1.5">
           <li>Open <LinkOut href="https://supabase.com/dashboard/projects">Supabase dashboard</LinkOut> and click <Click>New project</Click>.</li>
-          <li><b>Name:</b> something clear, e.g. <code className="font-mono">finroute-sunday-kovuru</code>.</li>
+          <li><b>Name:</b> something clear, e.g. <code className="font-mono">finroute-business-name</code>.</li>
           <li><b>Database password:</b> click <Click>Generate a password</Click> and save it in a password manager. You won't need it for daily use.</li>
           <li><b>Region:</b> choose <b>South Asia (Mumbai)</b> for the fastest app.</li>
           <li>Click <Click>Create new project</Click> and wait about 2 minutes until it says the project is ready.</li>
@@ -367,6 +368,10 @@ export default function TenantSetupGuide({ onOpenAddTenant }) {
         <Callout type="ok">
           Good result: every policy is called <b>Operators full access …</b> for <b>{'{authenticated}'}</b>, and the
           second query returns <b>no rows</b>.
+        </Callout>
+        <Callout type="info">
+          Then run every script in <b>Tenant database updates</b> (further down this page), in order, in the same SQL Editor.
+          A brand-new tenant needs all of them.
         </Callout>
       </Step>
 
@@ -465,6 +470,28 @@ export default function TenantSetupGuide({ onOpenAddTenant }) {
       </Step>
 
       {/* Extra sections */}
+      <Section title={`Tenant database updates (latest: v${LATEST_TENANT_VERSION})`} defaultOpen>
+        <p>
+          Every tenant has its own database, so improvements to FinRoute sometimes need a small script run in
+          <b> each tenant&apos;s</b> SQL Editor. The Tenants Directory shows each tenant&apos;s version; any tenant marked
+          <b> update needed</b> should get the missing scripts below, <b>in order</b>.
+        </p>
+        <ol className="list-decimal pl-5 space-y-1">
+          <li>Open the tenant&apos;s project → <Click>SQL Editor</Click> → <Click>New query</Click> (check the project in the address bar).</li>
+          <li>Copy the next script it&apos;s missing, paste, <Click>Run</Click>. The last line shows the new version number.</li>
+          <li>Back in FinRoute, reload the Tenants Directory: the badge should say <b>up to date</b>.</li>
+        </ol>
+        {TENANT_UPDATES.map(u => (
+          <div key={u.version} className="space-y-2">
+            <p className="text-[12px]"><b>v{u.version}: {u.title}.</b> {u.summary}</p>
+            <CodeBlock code={u.sql} title={u.file} language="sql" collapsible />
+          </div>
+        ))}
+        <Callout type="info">
+          Scripts are safe to run twice, so if you&apos;re unsure whether one was applied, just run it again.
+        </Callout>
+      </Section>
+
       <Section title="Switching an existing (older) tenant to secure sign-in">
         <p>Older tenants were created before the lockdown. For each one, in this order:</p>
         <ol className="list-decimal pl-5 space-y-1.5">
@@ -474,6 +501,7 @@ export default function TenantSetupGuide({ onOpenAddTenant }) {
           <li>Run the <b>lockdown script</b> in their SQL Editor (step 3).</li>
           <li>Edit the tenant → tick <b>Require tenant sign-in</b> → Save.</li>
           <li>Do the <b>final check</b> (step 8).</li>
+          <li>Run any <b>Tenant database updates</b> it is missing.</li>
         </ol>
         <Callout type="warn">
           Do it in exactly this order. If you lock the database before the operator has logged in once with a secret key

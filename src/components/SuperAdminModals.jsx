@@ -812,7 +812,7 @@ export default function SuperAdminModals({
                 <label className="block text-slate-700 font-semibold mb-1">Client / Operator Name *</label>
                 <input
                   type="text"
-                  placeholder="e.g. Sunday Kovuru"
+                  placeholder="e.g. Sri Lakshmi Finance"
                   value={newClientName}
                   onChange={(e) => setNewClientName(e.target.value)}
                   required

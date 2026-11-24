@@ -49,6 +49,7 @@ import {
   updateTenantFullDetails,
   fetchTenantAuditLogs,
   fetchTenantStats,
+  fetchTenantVersions,
   fetchSuperAdmins,
   createSuperAdmin,
   deleteSuperAdmin,
@@ -58,6 +59,7 @@ import {
 } from '../services/masterAuthService';
 import SuperAdminModals from './SuperAdminModals';
 import DeleteTenantModal from './DeleteTenantModal';
+import TenantVersionBadge from './TenantVersionBadge';
 
 // Loaded only when the admin opens the Setup Guide tab
 const TenantSetupGuide = lazy(() => import('./TenantSetupGuide'));
@@ -76,6 +78,7 @@ export default function SuperAdminPanel({ onBackToApp }) {
 
   // Tenants Management
   const [tenants, setTenants] = useState([]);
+  const [tenantVersions, setTenantVersions] = useState({});
   const [isFetchingTenants, setIsFetchingTenants] = useState(false);
   const [isPingingAll, setIsPingingAll] = useState(false);
   const [pingReport, setPingReport] = useState(null);
@@ -197,6 +200,8 @@ export default function SuperAdminPanel({ onBackToApp }) {
       setTenants(res.data);
     }
     setIsFetchingTenants(false);
+    // Database versions are checked server-side per tenant; load them after the list
+    fetchTenantVersions().then(setTenantVersions).catch(() => {});
   };
 
   const loadHealthLogs = async () => {
@@ -1067,6 +1072,9 @@ export default function SuperAdminPanel({ onBackToApp }) {
                                     {new Date(t.last_health_check_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                   </span>
                                 )}
+                              </div>
+                              <div>
+                                <TenantVersionBadge info={tenantVersions[t.id]} onOpenGuide={() => setActiveAdminTab('guide')} />
                               </div>
                             </div>
                           ) : (

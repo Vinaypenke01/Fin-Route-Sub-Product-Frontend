@@ -1,0 +1,21 @@
+// Registry of tenant database updates. Each tenant has its own Supabase
+// project, so every schema change is a numbered script the admin runs in each
+// tenant's SQL Editor. The admin panel compares each tenant's version with
+// LATEST_TENANT_VERSION and the Setup Guide lists these scripts with copy buttons.
+//
+// To add an update: create supabase/tenant_updates/NNN_name.sql (safe to run
+// twice, ends by inserting its version into finroute_schema_version), then add
+// an entry below.
+import update001 from '../../supabase/tenant_updates/001_schema_version.sql?raw';
+
+export const TENANT_UPDATES = [
+  {
+    version: 1,
+    file: 'supabase/tenant_updates/001_schema_version.sql',
+    title: 'Schema version tracking',
+    summary: 'Adds a small table that records which updates this tenant database has, so the admin panel can show who is up to date.',
+    sql: update001,
+  },
+];
+
+export const LATEST_TENANT_VERSION = TENANT_UPDATES.reduce((max, u) => Math.max(max, u.version), 0);

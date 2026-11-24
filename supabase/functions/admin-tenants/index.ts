@@ -335,6 +335,37 @@ serve(withCors(async (req: Request) => {
       }
 
       // ------------------------------------------------------------------------
+      // 4a. TENANT DATABASE VERSIONS (which tenant updates have been applied)
+      // ------------------------------------------------------------------------
+      case 'tenant_versions': {
+        const { data: rows, error: rErr } = await serviceClient.from('master_tenants').select('id');
+        if (rErr) throw rErr;
+
+        const entries = await Promise.all((rows || []).map(async (r: { id: string }) => {
+          try {
+            const access = await getTenantDbAccess(serviceClient, r.id);
+            if (!access) return [r.id, { status: 'unconfigured', version: null }];
+            if (!access.secretKey) return [r.id, { status: 'no_key', version: null }];
+
+            const client = getTenantDataClient(access);
+            const res: any = await Promise.race([
+              client.from('finroute_schema_version').select('version').order('version', { ascending: false }).limit(1),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), 6000)),
+            ]);
+            if (res?.error) {
+              const missing = res.error.code === '42P01' || res.error.code === 'PGRST205' || /does not exist|could not find/i.test(res.error.message || '');
+              return [r.id, missing ? { status: 'ok', version: 0 } : { status: 'error', version: null, message: res.error.message }];
+            }
+            return [r.id, { status: 'ok', version: Number(res?.data?.[0]?.version) || 0 }];
+          } catch (e) {
+            return [r.id, { status: 'error', version: null, message: String((e as Error)?.message || e) }];
+          }
+        }));
+
+        return jsonResponse({ success: true, versions: Object.fromEntries(entries) });
+      }
+
+      // ------------------------------------------------------------------------
       // 4b. DELETE TENANT (master registry only; tenant project is untouched)
       // ------------------------------------------------------------------------
       case 'delete_tenant': {

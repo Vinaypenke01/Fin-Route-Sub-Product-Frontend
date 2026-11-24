@@ -437,6 +437,19 @@ export async function updateTenantFullDetails({
  * Routes through the authenticated 'admin-tenants' Edge Function.
  */
 /**
+ * Super-Admin: which tenant database update each tenant has applied.
+ * Returns { [tenantId]: { status: 'ok'|'no_key'|'unconfigured'|'error', version, message? } }
+ */
+export async function fetchTenantVersions() {
+  try {
+    const res = await invokeAdminEdgeFunction('admin-tenants', 'tenant_versions');
+    return res?.success ? (res.versions || {}) : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
  * Super-Admin: Permanently delete a tenant from the master registry.
  * The server also removes the operator's sign-in account in the tenant
  * project and the stored secret key. The tenant's own Supabase project and
