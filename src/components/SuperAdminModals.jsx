@@ -533,6 +533,8 @@ export default function SuperAdminModals({
                                         {log.details.week && <span className="mr-2">Week: {log.details.week}</span>}
                                         {log.details.reason && <span>Reason: {log.details.reason}</span>}
                                         {log.details.disbursed && <span>Principal: {log.details.disbursed}</span>}
+                                        {log.details.summary && <span className="text-slate-700">{log.details.summary}</span>}
+                                        {log.details.by && <span className="text-slate-400">by {log.details.by}</span>}
                                       </>
                                     )}
                                   </div>

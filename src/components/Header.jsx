@@ -1,5 +1,5 @@
 import React from 'react';
-import { UserPlus, CalendarPlus, CalendarMinus, Archive, FileDown, LogOut, RefreshCw, Loader2, DownloadCloud, UploadCloud, FileSpreadsheet, Globe } from 'lucide-react';
+import { UserPlus, CalendarPlus, CalendarMinus, Archive, FileDown, LogOut, Loader2, FileSpreadsheet, History } from 'lucide-react';
 import { t, AVAILABLE_LANGUAGES } from '../utils/translations';
 
 export default function Header({
@@ -9,6 +9,7 @@ export default function Header({
   onOpenAddWeek,
   onOpenDeleteWeek,
   onOpenArchive,
+  onOpenHistory,
   onDownloadPDF,
   isGeneratingPDF = false,
   onExportCSV,
@@ -154,6 +155,17 @@ export default function Header({
             <Archive className="w-3.5 h-3.5 text-amber-600" />
             <span>{t('actions.archiveRenew', language)}</span>
           </button>
+
+          {onOpenHistory && (
+            <button
+              onClick={onOpenHistory}
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-white hover:bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+              title="See who changed what, and when"
+            >
+              <History className="w-3.5 h-3.5 text-indigo-600" />
+              <span>{language === 'te' ? 'చరిత్ర' : 'History'}</span>
+            </button>
+          )}
 
           {/* Download PDF Ledger Report */}
           <button

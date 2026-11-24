@@ -23,6 +23,7 @@ const LoginScreen = lazy(() => import('./components/LoginScreen'));
 const ArchiveTable = lazy(() => import('./components/ArchiveTable'));
 const LandingPage = lazy(() => import('./components/LandingPage'));
 const SuperAdminPanel = lazy(() => import('./components/SuperAdminPanel'));
+const ChangeHistoryModal = lazy(() => import('./components/ChangeHistoryModal'));
 
 import {
   SESSION_AUTH_KEY,
@@ -236,6 +237,7 @@ export default function App() {
   const [isAddVillageOpen, setIsAddVillageOpen] = useState(false);
   const [isAddWeekOpen, setIsAddWeekOpen] = useState(false);
   const [isArchiveOpen, setIsArchiveOpen] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isRenewModalOpen, setIsRenewModalOpen] = useState(false);
   const [renewTargetCustomer, setRenewTargetCustomer] = useState(null);
   const [villageContext, setVillageContext] = useState(null);
@@ -1051,6 +1053,7 @@ export default function App() {
         onOpenAddWeek={() => setIsAddWeekOpen(true)}
         onOpenDeleteWeek={handleOpenDeleteWeek}
         onOpenArchive={() => setIsArchiveOpen(true)}
+        onOpenHistory={tenantClient ? () => setIsHistoryOpen(true) : undefined}
         onDownloadPDF={handleDownloadPDF}
         isGeneratingPDF={isGeneratingPDF}
         onExportCSV={handleExportCSV}
@@ -1167,6 +1170,18 @@ export default function App() {
         customers={customers}
         handleConfirmDeleteCustomer={handleConfirmDeleteCustomer}
       />
+
+      {isHistoryOpen && (
+        <Suspense fallback={null}>
+          <ChangeHistoryModal
+            isOpen={isHistoryOpen}
+            onClose={() => setIsHistoryOpen(false)}
+            tenantClient={tenantClient}
+            customers={customers}
+            weeks={weeks}
+          />
+        </Suspense>
+      )}
 
       {/* 6. FinRoute Sub-Product Footer */}
       <Footer />

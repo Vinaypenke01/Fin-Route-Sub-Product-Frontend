@@ -731,6 +731,30 @@ serve(withCors(async (req: Request) => {
 
         const combined: Array<Record<string, unknown>> = [];
 
+        // Change history (tenant update 003); ignored if the table doesn't exist yet
+        const { data: changeRows } = await tenantClient
+          .from('change_log')
+          .select('*')
+          .order('changed_at', { ascending: false })
+          .limit(100);
+        const fmt = (v: unknown) => (v === null || v === undefined || v === '' ? '–' : typeof v === 'object' ? '(details)' : String(v));
+        (changeRows || []).forEach((c: any) => {
+          const fields = Object.keys(c.new_values || c.old_values || {});
+          const summary = c.action === 'update'
+            ? fields.map((k: string) => k + ': ' + fmt(c.old_values?.[k]) + ' → ' + fmt(c.new_values?.[k])).join('; ')
+            : c.table_name === 'payments'
+              ? 'amount: ' + fmt((c.new_values || c.old_values)?.amount)
+              : '';
+          combined.push({
+            id: 'chg-' + c.id,
+            action: String(c.table_name).toUpperCase() + '_' + String(c.action).toUpperCase(),
+            entity_type: 'Change history',
+            entity_id: c.record_id,
+            details: { summary, by: c.changed_by_email || 'unknown' },
+            created_at: c.changed_at,
+          });
+        });
+
         if (Array.isArray(directLogs)) {
           directLogs.forEach(l => combined.push(l));
         }

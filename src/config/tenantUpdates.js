@@ -8,6 +8,7 @@
 // an entry below.
 import update001 from '../../supabase/tenant_updates/001_schema_version.sql?raw';
 import update002 from '../../supabase/tenant_updates/002_session_control.sql?raw';
+import update003 from '../../supabase/tenant_updates/003_change_log.sql?raw';
 
 export const TENANT_UPDATES = [
   {
@@ -23,6 +24,13 @@ export const TENANT_UPDATES = [
     title: 'Session control',
     summary: 'Lets the admin "End session" button sign the operator out of their database immediately (for a lost or stolen phone).',
     sql: update002,
+  },
+  {
+    version: 3,
+    file: 'supabase/tenant_updates/003_change_log.sql',
+    title: 'Change history',
+    summary: 'The database records every change to payments, customers, weeks and cash settlements (old value, new value, who, when). Shown under History in the app and in the admin activity view.',
+    sql: update003,
   },
 ];
 
