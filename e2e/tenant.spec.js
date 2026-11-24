@@ -52,23 +52,25 @@ test('sign in, save a payment, reload, it is still there', async ({ page }) => {
     await login(page);
     await expect(saveStatus(page)).toHaveText(/All changes saved/i, { timeout: 30_000 });
 
-    const cell = page.locator('table input[type="number"][placeholder="0"]').first();
-    await expect(cell).toBeVisible();
-    const original = await cell.inputValue();
-    const testValue = original === '123' ? '124' : '123';
+    // A customer's payment cell (click to edit), not the cash settlement boxes
+    const cell = () => page.getByTestId('payment-cell').first();
+    const editCell = async () => { await cell().click(); const input = cell().locator('input'); await expect(input).toBeVisible(); return input; };
 
-    await cell.fill(testValue);
-    await cell.press('Tab');
+    let input = await editCell();
+    const original = await input.inputValue();
+    const testValue = original === '123' ? '124' : '123';
+    await input.fill(testValue);
+    await input.press('Enter');
     await expect(saveStatus(page)).toHaveText(/All changes saved/i, { timeout: 30_000 });
 
     await page.reload();
     await expect(saveStatus(page)).toHaveText(/All changes saved/i, { timeout: 30_000 });
-    await expect(page.locator('table input[type="number"][placeholder="0"]').first()).toHaveValue(testValue);
+    input = await editCell();
+    await expect(input).toHaveValue(testValue);
 
     // Put the original value back
-    const again = page.locator('table input[type="number"][placeholder="0"]').first();
-    await again.fill(original);
-    await again.press('Tab');
+    await input.fill(original);
+    await input.press('Enter');
     await expect(saveStatus(page)).toHaveText(/All changes saved/i, { timeout: 30_000 });
 
     // The change appears in History

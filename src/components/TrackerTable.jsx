@@ -759,7 +759,7 @@ export default function TrackerTable({
 
                     // CASE 4: Active Week -> Editable Currency Cell
                     return (
-                      <td key={w.id} className="border-r border-[#E2E8F0] px-1 py-1 text-right">
+                      <td key={w.id} data-testid="payment-cell" className="border-r border-[#E2E8F0] px-1 py-1 text-right">
                         <EditableCurrencyCell
                           initialValue={activePaymentVal}
                           onSave={(val) => onUpdatePayment(cust._rowId, w.id, val)}
