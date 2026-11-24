@@ -68,6 +68,7 @@ export default function LoginScreen({ onLoginSuccess, onBackToLanding }) {
           tenantAnonKey: res.tenantAnonKey,
           tenantSession: res.tenantSession || null,
           tenantAuthRequired: Boolean(res.tenantAuthRequired),
+          deviceSessionManaged: Boolean(res.deviceSessionManaged),
           expiry: res.expiresAt || null,
           rememberMe
         });

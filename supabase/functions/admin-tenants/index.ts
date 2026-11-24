@@ -121,6 +121,11 @@ serve(withCors(async (req: Request) => {
             master_credentials (
               last_login,
               expires_at
+            ),
+            master_active_sessions (
+              device_label,
+              started_at,
+              last_seen_at
             )
           `)
           .order('created_at', { ascending: false });
@@ -363,6 +368,37 @@ serve(withCors(async (req: Request) => {
         }));
 
         return jsonResponse({ success: true, versions: Object.fromEntries(entries) });
+      }
+
+      // ------------------------------------------------------------------------
+      // 4a2. END AN OPERATOR'S ACTIVE SESSION (lost / stolen phone)
+      // ------------------------------------------------------------------------
+      case 'end_session': {
+        const tenantId = String(payload.tenantId || '').trim();
+        if (!tenantId) return errorResponse('tenantId is required.', 400);
+
+        // 1. Free the account: the device's next heartbeat (within a minute) signs it out
+        const { error: dErr } = await serviceClient.from('master_active_sessions').delete().eq('tenant_id', tenantId);
+        if (dErr) throw dErr;
+
+        // 2. Also revoke the tenant database sign-in right away (tenant update 002)
+        const warnings: string[] = [];
+        try {
+          const access = await getTenantDbAccess(serviceClient, tenantId);
+          if (access?.secretKey && access.authUserId) {
+            const { error: rErr } = await getTenantDataClient(access).rpc('finroute_revoke_user_sessions', { p_user_id: access.authUserId });
+            if (rErr) {
+              warnings.push(/could not find|does not exist|PGRST202/i.test(rErr.message || '')
+                ? 'Run tenant update 002 on this tenant so "End session" also signs the device out of the database immediately.'
+                : `Database sign-in not revoked: ${rErr.message}`);
+            }
+          }
+        } catch (e) {
+          warnings.push(`Database sign-in not revoked: ${(e as Error)?.message || e}`);
+        }
+
+        console.log(`Session ended by ${callerUser.email} for tenant ${tenantId}`);
+        return jsonResponse({ success: true, message: 'Session ended. The device will be signed out within a minute.', warnings });
       }
 
       // ------------------------------------------------------------------------

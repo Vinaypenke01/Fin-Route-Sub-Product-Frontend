@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { getDeviceSessionId, getDeviceLabel } from './deviceSession';
 
 const masterUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_MASTER_SUPABASE_URL) || '';
 const masterAnonKey = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_MASTER_SUPABASE_ANON_KEY) || '';
@@ -49,7 +50,12 @@ export async function authenticateTenant(email, password) {
     // 1. Preferred: tenant-login Edge Function (verifies in master, returns a
     //    tenant Auth session so the tenant DB can require signed-in operators).
     const { data, error } = await masterSupabase.functions.invoke('tenant-login', {
-      body: { email: cleanEmail, password: cleanPassword },
+      body: {
+        email: cleanEmail,
+        password: cleanPassword,
+        deviceSessionId: getDeviceSessionId(),
+        deviceLabel: getDeviceLabel(),
+      },
     });
 
     if (!error && data) {
@@ -65,6 +71,7 @@ export async function authenticateTenant(email, password) {
         tenantAnonKey: data.tenantAnonKey,
         tenantAuthRequired: Boolean(data.tenantAuthRequired),
         tenantSession: data.session || null,
+        deviceSessionManaged: true,
         expiresAt: data.expiresAt ? new Date(data.expiresAt).getTime() : null,
       };
     }
@@ -446,6 +453,35 @@ export async function fetchTenantVersions() {
     return res?.success ? (res.versions || {}) : {};
   } catch {
     return {};
+  }
+}
+
+/**
+ * Super-Admin: end the operator's active session (lost or stolen phone).
+ */
+export async function endTenantSession(tenantId) {
+  try {
+    const res = await invokeAdminEdgeFunction('admin-tenants', 'end_session', { tenantId });
+    if (res?.success) return { success: true, message: res.message, warning: warningsMessage(res) };
+    return { success: false, message: res?.message || 'Failed to end session.' };
+  } catch (err) {
+    return { success: false, message: await edgeErrorMessage(err, 'Failed to end session.') };
+  }
+}
+
+/**
+ * Operator: keep this device's session alive / release it on logout.
+ * Returns { active: boolean | null } (null = couldn't reach the server).
+ */
+export async function tenantSessionPing(action, email, deviceSessionId) {
+  try {
+    const { data, error } = await masterSupabase.functions.invoke('tenant-session', {
+      body: { action, email, deviceSessionId },
+    });
+    if (error || !data) return { active: null };
+    return { active: data.active === undefined ? null : Boolean(data.active), reason: data.reason || null };
+  } catch {
+    return { active: null };
   }
 }
 

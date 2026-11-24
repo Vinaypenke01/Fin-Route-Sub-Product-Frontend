@@ -7,6 +7,7 @@
 // twice, ends by inserting its version into finroute_schema_version), then add
 // an entry below.
 import update001 from '../../supabase/tenant_updates/001_schema_version.sql?raw';
+import update002 from '../../supabase/tenant_updates/002_session_control.sql?raw';
 
 export const TENANT_UPDATES = [
   {
@@ -15,6 +16,13 @@ export const TENANT_UPDATES = [
     title: 'Schema version tracking',
     summary: 'Adds a small table that records which updates this tenant database has, so the admin panel can show who is up to date.',
     sql: update001,
+  },
+  {
+    version: 2,
+    file: 'supabase/tenant_updates/002_session_control.sql',
+    title: 'Session control',
+    summary: 'Lets the admin "End session" button sign the operator out of their database immediately (for a lost or stolen phone).',
+    sql: update002,
   },
 ];
 

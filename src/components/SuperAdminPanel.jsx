@@ -60,6 +60,7 @@ import {
 import SuperAdminModals from './SuperAdminModals';
 import DeleteTenantModal from './DeleteTenantModal';
 import TenantVersionBadge from './TenantVersionBadge';
+import ActiveSessionInfo from './ActiveSessionInfo';
 
 // Loaded only when the admin opens the Setup Guide tab
 const TenantSetupGuide = lazy(() => import('./TenantSetupGuide'));
@@ -1076,6 +1077,7 @@ export default function SuperAdminPanel({ onBackToApp }) {
                               <div>
                                 <TenantVersionBadge info={tenantVersions[t.id]} onOpenGuide={() => setActiveAdminTab('guide')} />
                               </div>
+                              <ActiveSessionInfo tenant={t} onEnded={loadTenants} />
                             </div>
                           ) : (
                             <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">

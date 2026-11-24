@@ -180,6 +180,13 @@ export default function App() {
     // End the operator's tenant DB session (clears its stored tokens locally)
     isLoggingOutRef.current = true;
     tenantClient?.auth.signOut({ scope: 'local' }).catch(() => {});
+    // Free the "one active device" slot so this account can sign in elsewhere
+    if (auth?.email) {
+      const email = auth.email;
+      Promise.all([import('./services/masterAuthService'), import('./services/deviceSession')])
+        .then(([m, d]) => m.tenantSessionPing('logout', email, d.getDeviceSessionId()))
+        .catch(() => {});
+    }
     sessionStorage.removeItem(SESSION_AUTH_KEY);
     localStorage.removeItem(SESSION_AUTH_KEY);
     localStorage.removeItem(LEGACY_SHEET_URL_KEY);
@@ -313,6 +320,37 @@ export default function App() {
     };
   }, [auth?.isSupabaseTenant, auth?.tenantAuthRequired, tenantClient]);
 
+  // One active device per tenant: tell the server this device is still in use
+  // (every minute and when the tab becomes visible). If the server says the
+  // session was ended (admin, suspension, or taken over after this device went
+  // quiet), sign out here.
+  useEffect(() => {
+    if (!auth?.isSupabaseTenant || !auth?.email || !auth?.deviceSessionManaged) return;
+    let cancelled = false;
+    const email = auth.email;
+    const beat = async () => {
+      if (cancelled || document.visibilityState === 'hidden') return;
+      try {
+        const [m, d] = await Promise.all([import('./services/masterAuthService'), import('./services/deviceSession')]);
+        const res = await m.tenantSessionPing('heartbeat', email, d.getDeviceSessionId());
+        if (cancelled || res.active !== false) return; // null = offline: keep working
+        handleLogout();
+        addToast(res.reason === 'suspended'
+          ? 'Your account has been suspended. Please contact your administrator.'
+          : 'You were signed out because this account was opened on another device or the session was ended by your administrator.', 'warning');
+      } catch { /* offline or server unreachable: try again next minute */ }
+    };
+    beat();
+    const interval = setInterval(beat, 60000);
+    const onVisible = () => { if (document.visibilityState === 'visible') beat(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [auth?.isSupabaseTenant, auth?.email, auth?.deviceSessionManaged]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Real-time Tenant DB Connection Health Monitor (Every 30 seconds)
   useEffect(() => {
     if (!auth?.isSupabaseTenant || !tenantClient) return;
@@ -341,6 +379,7 @@ export default function App() {
     tenantAnonKey,
     tenantSession,
     tenantAuthRequired,
+    deviceSessionManaged,
     expiry,
     rememberMe
   }) => {
@@ -376,6 +415,7 @@ export default function App() {
       tenantDbUrl: tenantDbUrl || null,
       tenantAnonKey: tenantAnonKey || null,
       tenantAuthRequired: Boolean(tenantAuthRequired),
+      deviceSessionManaged: Boolean(deviceSessionManaged),
       isSupabaseTenant: true,
       expiry: expiry || null,
       loginTimestamp: Date.now(),

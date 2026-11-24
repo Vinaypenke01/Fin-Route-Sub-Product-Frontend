@@ -213,9 +213,10 @@ const MASTER_MIGRATIONS = [
   'supabase/migrations/20261123_security_hardening.sql',
   'supabase/migrations/20261124_tenant_auth.sql',
   'supabase/migrations/20261125_tenant_delete.sql',
+  'supabase/migrations/20261126_active_sessions.sql',
 ];
 
-const DEPLOY_FUNCTIONS_CMD = `npx supabase functions deploy tenant-login admin-tenants keep-alive super-admin-login --project-ref ${MASTER_REF}`;
+const DEPLOY_FUNCTIONS_CMD = `npx supabase functions deploy tenant-login tenant-session admin-tenants keep-alive super-admin-login --project-ref ${MASTER_REF}`;
 const ALLOWED_ORIGINS_CMD = `npx supabase secrets set --project-ref ${MASTER_REF} "ALLOWED_ORIGINS=${SITE_URL},http://localhost:5173,https://*--sub-project001.netlify.app"`;
 
 function parseProjectRef(url) {
@@ -524,6 +525,7 @@ export default function TenantSetupGuide({ onOpenAddTenant }) {
               <tr><td className="p-2">Step 8 still shows rows</td><td className="p-2">The lockdown ran in a different project. Open the tenant's SQL Editor (check the URL) and run step 3 again.</td></tr>
               <tr><td className="p-2">"Save the tenant secret key before requiring tenant sign-in"</td><td className="p-2">Paste the secret key in the same Edit form, then tick the box.</td></tr>
               <tr><td className="p-2">Tenant shows "sleeping" in health logs</td><td className="p-2">Open the tenant project in Supabase and click <b>Restore project</b>, then ping again.</td></tr>
+              <tr><td className="p-2">Operator sees "already open on another device"</td><td className="p-2">Only one device can use an account at a time. Log out on the other device, or wait 5 minutes after closing it. Lost phone: Tenants Directory → <b>End session</b>.</td></tr>
               <tr><td className="p-2">Operator forgot their password</td><td className="p-2">Edit Tenant → type a new password → Save. It updates both FinRoute and their tenant account.</td></tr>
             </tbody>
           </table>
