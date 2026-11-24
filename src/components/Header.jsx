@@ -61,7 +61,7 @@ export default function Header({
                 <span className="relative flex h-2 w-2">
                   <span
                     className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
-                      cloudStatus?.error
+                      (cloudStatus?.error || cloudStatus?.connected === false)
                         ? 'bg-red-400'
                         : cloudStatus?.isSyncing
                         ? 'bg-amber-400'
@@ -70,7 +70,7 @@ export default function Header({
                   />
                   <span
                     className={`relative inline-flex rounded-full h-2 w-2 ${
-                      cloudStatus?.error
+                      (cloudStatus?.error || cloudStatus?.connected === false)
                         ? 'bg-red-500'
                         : cloudStatus?.isSyncing
                         ? 'bg-amber-500'
@@ -80,6 +80,23 @@ export default function Header({
                 </span>
                 <span>Sub-Product</span>
               </span>
+              {isSupabaseTenant && cloudStatus?.text && (
+                <span
+                  role="status"
+                  aria-live="polite"
+                  data-testid="save-status"
+                  className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold border ${
+                    cloudStatus.error || cloudStatus.connected === false
+                      ? 'bg-red-50 text-red-700 border-red-200'
+                      : cloudStatus.isSyncing
+                      ? 'bg-amber-50 text-amber-800 border-amber-200'
+                      : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                  }`}
+                  title={cloudStatus.error || cloudStatus.text}
+                >
+                  {cloudStatus.text}
+                </span>
+              )}
               {clientName && (
                 <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
                   🏢 {clientName}
