@@ -14,19 +14,9 @@ import { generatePdfReport } from './utils/generatePdfReport';
 import { useTrackerSync } from './hooks/useTrackerSync';
 import { exportTrackerToCSV } from './utils/exportCSV';
 import { getSavedLanguage, setSavedLanguage } from './utils/translations';
-import {
-  getTenantClient,
-  syncPaymentToTenantDb,
-  syncCustomerFieldToTenantDb,
-  updateTenantReconciliation,
-  addTenantCustomer,
-  deleteTenantCustomer,
-  archiveAndRenewCustomerInTenantDb,
-  archiveLoansInTenantDb,
-  addTenantWeek,
-  deleteTenantWeek,
-  updateTenantRowOrder
-} from './services/tenantDatabaseService';
+import { getTenantClient } from './services/tenantDatabaseService';
+import { useOutbox } from './hooks/useOutbox';
+import SyncStatusBar from './components/SyncStatusBar';
 
 // Lazy-loaded components for optimal initial bundle and performance
 const LoginScreen = lazy(() => import('./components/LoginScreen'));
@@ -123,6 +113,17 @@ export default function App() {
       window.removeEventListener('error', onError);
     };
   }, []);
+
+  // Reliable saving: every change is stored on this device first, then sent
+  // to the tenant database (retried automatically until it is confirmed).
+  const outbox = useOutbox({
+    tenantClient,
+    email: auth?.email || null,
+    onPermanentFailure: (entry, message) => {
+      addToast(`Couldn't save ${entry.label || 'a change'}: ${message}`, 'error');
+    }
+  });
+  const queueChange = (type, payload, opts) => outbox.enqueue(type, payload, opts);
 
   // Dynamic tenant-scoped data initialization
   const initialSession = getValidStoredSession();
@@ -236,7 +237,7 @@ export default function App() {
   const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, title: '', message: '', type: 'warning', onConfirm: null });
 
   // Background Sync, Persistence, Auto-pull, and Unload Protection via custom hook
-  const { debounceSync, enqueueSyncTask } = useTrackerSync({
+  useTrackerSync({
     auth,
     tenantClient,
     weeks,
@@ -247,12 +248,45 @@ export default function App() {
     setWeeklyReconciliation,
     archive,
     setArchive,
-    cloudStatus,
     setCloudStatus,
     addToast,
     handleLogout,
-    getTenantStorageKey
+    getTenantStorageKey,
+    flushOutbox: outbox.flush,
+    getPendingCount: outbox.getPendingCount
   });
+
+  // Logout requested by the user: warn if changes haven't reached the server yet
+  const handleUserLogout = () => {
+    const waiting = outbox.getPendingCount();
+    if (waiting === 0) {
+      handleLogout();
+      return;
+    }
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Changes not saved to the server yet',
+      message: `${waiting} change(s) haven't reached the server yet. They stay on this device and are sent the next time you sign in here while online.\n\nLog out anyway?`,
+      type: 'warning',
+      onConfirm: () => {
+        setConfirmDialog({ isOpen: false });
+        handleLogout();
+      }
+    });
+  };
+
+  // Header status reflects unsent changes first, then the database connection
+  const headerCloudStatus = outbox.failedCount > 0
+    ? { ...cloudStatus, connected: false, isSyncing: false, text: `${outbox.failedCount} change(s) need attention` }
+    : outbox.authBlocked
+      ? { ...cloudStatus, connected: false, isSyncing: false, text: 'Sign in again to send changes' }
+      : outbox.pendingCount > 0
+        ? (outbox.isSending
+          ? { ...cloudStatus, isSyncing: true, text: `Saving ${outbox.pendingCount}…` }
+          : { ...cloudStatus, connected: false, isSyncing: false, text: `${outbox.pendingCount} change(s) waiting for internet` })
+        : (cloudStatus.text === 'Supabase DB (Private)'
+          ? { ...cloudStatus, text: 'All changes saved ✓' }
+          : cloudStatus);
 
   // Tenant sign-in guard: when the tenant DB requires a signed-in operator,
   // a missing or ended session means sign in again (never fall back to the
@@ -429,26 +463,16 @@ export default function App() {
     };
     const label = fieldLabels[field] || field;
 
-    if (!tenantClient) {
-      addToast(`Saved ${label} locally (Offline mode)`, 'info');
-      return;
-    }
-
-    const key = `field-${rowId}-${field}`;
-    debounceSync(key, () => {
-      enqueueSyncTask(key, async () => {
-        if (tenantClient) {
-          try {
-            await syncCustomerFieldToTenantDb(tenantClient, custIdToFind, field, value, Boolean(prevCust.isVillageDivider));
-            addToast(`Saved ${label} to Supabase!`, 'success');
-          } catch (err) {
-            console.error('Supabase customer update error:', err);
-            addToast(`Supabase save error: ${err.message}`, 'error');
-          }
-          return;
-        }
-      });
-    }, 300);
+    queueChange('customerField', {
+      customerId: custIdToFind,
+      field,
+      value,
+      isVillageDivider: Boolean(prevCust.isVillageDivider)
+    }, {
+      // Repeated edits of the same cell are merged (not for ID changes)
+      key: field === 'id' ? null : `field:${custIdToFind}:${field}`,
+      label: `${label} for "${prevCust.name || custIdToFind}"`
+    });
   };
 
   // Payment Update & Autosave by _rowId (Prevents any customer overwriting)
@@ -470,20 +494,10 @@ export default function App() {
 
     setCustomers(prev => prev.map(c => (c._rowId === rowId || c.id === rowId) ? updatedCustomer : c));
 
-    const key = `payment-${rowId}-${weekId}`;
-    debounceSync(key, () => {
-      enqueueSyncTask(key, async () => {
-        if (tenantClient) {
-          try {
-            await syncPaymentToTenantDb(tenantClient, custId, weekId, amount);
-            addToast(`Saved Payment ₹${amount} (${weekLabel}) to Supabase!`, 'success');
-          } catch (err) {
-            addToast(`Supabase Payment Error: ${err.message}`, 'error');
-          }
-          return;
-        }
-      });
-    }, 250);
+    queueChange('payment', { customerId: custId, weekId, amount }, {
+      key: `payment:${custId}:${weekId}`,
+      label: `payment ₹${amount} (${weekLabel}) for "${prevCust.name || custId}"`
+    });
   };
 
   // Reconciliation Update & Autosave (Includes Salaries deduction)
@@ -502,27 +516,11 @@ export default function App() {
     const weekObj = weeks.find(w => w.id === weekId);
     const weekLabel = weekObj?.label || weekId;
 
-    const key = `recon-${weekId}`;
-    debounceSync(key, () => {
-      enqueueSyncTask(key, async () => {
-        const r = updated[weekId];
-        if (tenantClient) {
-          try {
-            await updateTenantReconciliation(tenantClient, weekId, {
-              prevCash: r.prevCash,
-              expenses: r.expenses,
-              amountGiven: r.amountGiven,
-              salaries: r.salaries,
-              notes: r.notes
-            });
-            addToast(`Saved Reconciliation for ${weekLabel} to Supabase!`, 'success');
-          } catch (err) {
-            addToast(`Supabase recon error: ${err.message}`, 'error');
-          }
-          return;
-        }
-      });
-    }, 450);
+    const r = updated[weekId];
+    queueChange('recon', {
+      weekId,
+      values: { prevCash: r.prevCash, expenses: r.expenses, amountGiven: r.amountGiven, salaries: r.salaries, notes: r.notes }
+    }, { key: `recon:${weekId}`, label: `cash settlement for ${weekLabel}` });
   };
 
   // Delete Customer by _rowId (with Reason & Automatic Archive Preservation)
@@ -540,11 +538,7 @@ export default function App() {
         onConfirm: () => {
           setCustomers(prev => prev.filter(c => c._rowId !== rowId));
           setConfirmDialog({ isOpen: false });
-          if (tenantClient) {
-            deleteTenantCustomer(tenantClient, targetCust.id);
-            addToast(`Deleted village divider "${custName}" from Supabase.`, 'info');
-            return;
-          }
+          queueChange('deleteCustomer', { customerId: targetCust.id }, { label: `delete village "${custName}"` });
           addToast(`Deleted village divider "${custName}".`, 'info');
         }
       });
@@ -592,12 +586,8 @@ export default function App() {
 
     addToast(`Deleted "${targetCust.name}" and saved to Loan History Archive!`, 'info');
 
-    // 3. Sync deletion and archive entry
-    if (tenantClient) {
-      deleteTenantCustomer(tenantClient, targetCust.id, archiveRecord)
-        .then(() => addToast(`Stored "${targetCust.name}" in Supabase Archive!`, 'success'))
-        .catch(err => addToast(`Supabase delete error: ${err.message}`, 'error'));
-    }
+    // 3. Save the archive entry and deletion (sent when online)
+    queueChange('deleteCustomer', { customerId: targetCust.id, archiveRecord }, { label: `delete "${targetCust.name}"` });
   };
 
   // Permanently Delete Record from Loan History Archive
@@ -612,11 +602,7 @@ export default function App() {
         setConfirmDialog({ isOpen: false });
         addToast(`Permanently deleted archive record for "${name}".`, 'info');
 
-        if (tenantClient) {
-          tenantClient.from('loan_archive').delete().or(`id.eq.${archiveId},original_customer_id.eq.${archiveId}`)
-            .then(() => addToast(`Removed "${name}" from Supabase Archive!`, 'success'))
-            .catch(err => addToast(`Supabase archive delete error: ${err.message}`, 'error'));
-        }
+        queueChange('deleteArchived', { archiveId }, { label: `delete archive record "${name}"` });
       }
     });
   };
@@ -648,13 +634,13 @@ export default function App() {
     }
     setVillageContext(null);
 
-    // Synchronize newly added record to Database / Cloud
-    if (tenantClient) {
+    // Save the new record (sent when online)
+    {
       const resolvedVName = newCust.villageName || getCustomerVillageName(customers, insertUnderVillageRowId || custWithUid._rowId) || '';
       const matchingDivider = customers.find(c => c.isVillageDivider && (c._rowId === insertUnderVillageRowId || c.villageName === resolvedVName || c.name === resolvedVName));
       const resolvedVId = newCust.villageId || matchingDivider?.villageId || matchingDivider?.id || null;
 
-      addTenantCustomer(tenantClient, {
+      queueChange('addCustomer', { customer: {
         id: newCust.id,
         name: newCust.name,
         phone: newCust.phone,
@@ -666,13 +652,8 @@ export default function App() {
         villageName: resolvedVName,
         villageId: resolvedVId,
         rowOrder: customers.length + 1
-      })
-        .then(() => addToast(`Added "${newCust.name}" to Supabase!`, 'success'))
-        .catch(err => addToast(`Supabase add error: ${err.message}`, 'error'));
-      return;
+      } }, { label: `add "${newCust.name}"` });
     }
-
-    addToast(`Added "${newCust.name}" locally (Offline mode)`, 'info');
   };
 
   // Move Row (reorder customer / village with Cloud Sync)
@@ -687,14 +668,8 @@ export default function App() {
       next[idx] = next[targetIdx];
       next[targetIdx] = temp;
 
-      // Debounce sync row order to Database / Cloud
-      const key = 'sync-row-order';
-      debounceSync(key, () => {
-        const orderedIds = next.map(c => c.id || c.name);
-        if (tenantClient) {
-          updateTenantRowOrder(tenantClient, orderedIds);
-        }
-      }, 500);
+      // Save the new route order (repeated moves are merged into one save)
+      queueChange('rowOrder', { orderedIds: next.map(c => c.id || c.name) }, { key: 'row-order', label: 'route order' });
 
       return next;
     });
@@ -768,21 +743,15 @@ export default function App() {
 
     addToast(`Archived past loan for ${cust.name} & renewed with ₹${newAmount.toLocaleString('en-IN')}`, 'success');
 
-    // Synchronize renewal to Database / Cloud
-    if (tenantClient) {
-      archiveAndRenewCustomerInTenantDb(tenantClient, cust.id, {
-        newAmount: newAmount,
-        newDate: newDate || today,
-        renewedAtWeek: targetWeekId,
-        pastCyclePayments: previousPayments,
-        archiveRecord: archiveRecord
-      })
-        .then(() => addToast(`Renewed loan in Supabase for "${cust.name}"!`, 'success'))
-        .catch(err => addToast(`Supabase renew error: ${err.message}`, 'error'));
-      return;
-    }
-
-    addToast(`Renewed loan for "${cust.name}" locally (Offline mode)`, 'info');
+    // Save the renewal (sent when online)
+    queueChange('renewCustomer', {
+      customerId: cust.id,
+      newAmount: newAmount,
+      newDate: newDate || today,
+      renewedAtWeek: targetWeekId,
+      pastCyclePayments: previousPayments,
+      archiveRecord: archiveRecord
+    }, { label: `renew loan for "${cust.name}"` });
   };
 
   // Restore Archived Customer back to active tracker
@@ -804,6 +773,29 @@ export default function App() {
 
     setCustomers(prev => [...prev, restoredCust]);
     addToast(`Restored "${item.name}" back to Active Tracker`, 'success');
+
+    // Save the restore: re-create the customer, its payments, then drop the archive copy
+    queueChange('addCustomer', { customer: {
+      id: restoredCust.id,
+      name: restoredCust.name,
+      phone: restoredCust.phone,
+      disbursed: restoredCust.disbursed,
+      originalAmount: restoredCust.originalAmount,
+      disbursedDate: restoredCust.disbursedDate,
+      startWeekId: weeks[0]?.id || null,
+      villageName: item.villageName || '',
+      villageId: item.villageId || null,
+      rowOrder: customers.length + 1
+    } }, { label: `restore "${item.name}"` });
+    Object.entries(restoredCust.payments || {}).forEach(([weekId, amount]) => {
+      if (Number(amount) > 0 && weeks.some(w => w.id === weekId)) {
+        queueChange('payment', { customerId: restoredCust.id, weekId, amount: Number(amount) }, {
+          key: `payment:${restoredCust.id}:${weekId}`,
+          label: `payment for restored "${item.name}"`
+        });
+      }
+    });
+    queueChange('deleteArchived', { archiveId }, { label: `archive copy of "${item.name}"` });
   };
 
   // Update Week 1 Date and cascade +7 days to all subsequent weeks
@@ -817,49 +809,22 @@ export default function App() {
     const updatedWeeks = recalculateWeeksFromWeekOne(weeks, newDateStr);
     setWeeks(updatedWeeks);
 
-    // Instantly synchronize updated week dates to Supabase or Google Sheet
-    if (tenantClient) {
-      const weekRows = updatedWeeks.map((w, idx) => {
-        let formattedDate = new Date().toISOString().split('T')[0];
-        if (w.date) {
-          const parts = String(w.date).split(/[-/]/);
-          if (parts.length === 3) {
-            formattedDate = parts[0].length === 4 ? `${parts[0]}-${parts[1]}-${parts[2]}` : `${parts[2]}-${parts[1]}-${parts[0]}`;
-          }
-        }
-        return {
-          id: w.id,
-          col_index: Number(w.col_index || w.colIndex || idx + 1),
-          label: w.label || `Week ${idx + 1}`,
-          week_date: formattedDate
-        };
-      });
-      tenantClient.from('weeks').upsert(weekRows, { onConflict: 'id' })
-        .then(() => addToast(`Week 1 updated to ${newDateStr}. All week dates updated in Supabase!`, 'success'))
-        .catch(err => addToast(`Supabase week update error: ${err.message}`, 'error'));
-      return;
-    }
-
-    addToast(`Week 1 updated to ${newDateStr} locally (Offline mode)`, 'info');
+    // Save all week dates (repeated changes are merged into one save)
+    queueChange('weekDates', { weeks: updatedWeeks }, { key: 'week-dates', label: 'week dates' });
+    addToast(`Week 1 updated to ${newDateStr}.`, 'success');
   };
 
   // Add Week Column with Cloud Sync
   const handleAddWeek = (newWeek) => {
     setWeeks(prev => [...prev, newWeek]);
 
-    if (tenantClient) {
-      addTenantWeek(tenantClient, {
-        id: newWeek.id,
-        label: newWeek.label,
-        date: newWeek.date,
-        colIndex: newWeek.colIndex || weeks.length + 1
-      })
-        .then(() => addToast(`Added column "${newWeek.label}" to Supabase!`, 'success'))
-        .catch(err => addToast(`Supabase week add error: ${err.message}`, 'error'));
-      return;
-    }
-
-    addToast(`Added column "${newWeek.label}" locally (Offline mode)`, 'info');
+    queueChange('addWeek', { week: {
+      id: newWeek.id,
+      label: newWeek.label,
+      date: newWeek.date,
+      colIndex: newWeek.colIndex || weeks.length + 1
+    } }, { label: `add column "${newWeek.label}"` });
+    addToast(`Added column "${newWeek.label}".`, 'success');
   };
 
   // Delete Latest Week with Cloud Sync
@@ -878,14 +843,8 @@ export default function App() {
         setWeeks(prev => prev.slice(0, -1));
         setConfirmDialog({ isOpen: false });
 
-        if (tenantClient) {
-          deleteTenantWeek(tenantClient, latestWeek.id)
-            .then(() => addToast(`Deleted column "${latestWeek.label}" from Supabase!`, 'success'))
-            .catch(err => addToast(`Supabase delete week error: ${err.message}`, 'error'));
-          return;
-        }
-
-        addToast(`Removed column: ${latestWeek.label} locally (Offline mode)`, 'info');
+        queueChange('deleteWeek', { weekId: latestWeek.id }, { label: `delete column "${latestWeek.label}"` });
+        addToast(`Removed column "${latestWeek.label}".`, 'info');
       }
     });
   };
@@ -950,15 +909,8 @@ export default function App() {
       return c;
     }));
 
-    // Synchronize batch archive to Supabase or Google Sheet
-    if (tenantClient) {
-      archiveLoansInTenantDb(tenantClient, toArchive)
-        .then(() => addToast(`Archived ${toArchive.length} loans in Supabase!`, 'success'))
-        .catch(err => addToast(`Supabase archive error: ${err.message}`, 'error'));
-      return;
-    }
-
-    addToast(`Archived ${toArchive.length} customers locally (Offline mode)`, 'info');
+    queueChange('archiveLoans', { loans: toArchive }, { label: `archive ${toArchive.length} loans` });
+    addToast(`Archived ${toArchive.length} loans.`, 'success');
   };
 
   // Download PDF Report in Horizontal Landscape Format (Full Account Details, Logo & Cash Reconciliation)
@@ -1048,7 +1000,7 @@ export default function App() {
     <div className="flex flex-col min-h-screen bg-slate-50 text-slate-900 font-sans">
       {/* 1. Header with Brand & Actions */}
       <Header
-        cloudStatus={cloudStatus}
+        cloudStatus={headerCloudStatus}
         onOpenAddCustomer={() => {
           setVillageContext(null);
           setIsAddCustomerOpen(true);
@@ -1062,11 +1014,33 @@ export default function App() {
         onDownloadPDF={handleDownloadPDF}
         isGeneratingPDF={isGeneratingPDF}
         onExportCSV={handleExportCSV}
-        onLogout={handleLogout}
+        onLogout={handleUserLogout}
         clientName={auth?.clientName}
         isSupabaseTenant={Boolean(auth?.isSupabaseTenant)}
         language={language}
         onLanguageChange={handleLanguageChange}
+      />
+
+      <SyncStatusBar
+        pendingCount={outbox.pendingCount}
+        failedCount={outbox.failedCount}
+        isSending={outbox.isSending}
+        authBlocked={outbox.authBlocked}
+        nextRetryAt={outbox.nextRetryAt}
+        entries={outbox.entries}
+        onRetry={outbox.retryNow}
+        onDiscard={(id) => {
+          setConfirmDialog({
+            isOpen: true,
+            title: 'Discard this change?',
+            message: 'It will not be saved to the server. The screen may show it until you reload.',
+            type: 'danger',
+            onConfirm: () => {
+              setConfirmDialog({ isOpen: false });
+              outbox.discard(id);
+            }
+          });
+        }}
       />
 
       {/* 2. Key Performance Indicators Deck */}

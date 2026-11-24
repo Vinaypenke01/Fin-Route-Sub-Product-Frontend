@@ -1,11 +1,15 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { fetchTenantLedgerData } from '../services/tenantDatabaseService';
 import { parseDate, formatDateDMY } from '../utils/formatters';
 import { normalizeCustomers } from '../utils/customerNormalization';
 
 /**
- * Custom hook to manage sequential background syncing, tenant scoped localStorage persistence,
- * initial cloud and Supabase auto-pull, and browser tab unload protection.
+ * Keeps the ledger on this device in step with the tenant database:
+ * - saves the current ledger to device storage after every change
+ * - loads the ledger from the database when the tenant session is ready,
+ *   but only AFTER any unsent changes (outbox) have reached the database,
+ *   so changes made offline are never overwritten by older server data
+ * - warns before closing the tab while changes are still unsent
  */
 export function useTrackerSync({
   auth,
@@ -18,69 +22,25 @@ export function useTrackerSync({
   setWeeklyReconciliation,
   archive,
   setArchive,
-  cloudStatus,
   setCloudStatus,
   addToast,
   handleLogout,
-  getTenantStorageKey
+  getTenantStorageKey,
+  flushOutbox,
+  getPendingCount
 }) {
-  const syncDebounceTimers = useRef({});
-  const syncQueueRef = useRef([]);
-  const isProcessingQueueRef = useRef(false);
-
-  // Sequential Background Queue Processor: ensures rapid-fire edits
-  // are processed sequentially (one database write at a time, in order)
-  const processSyncQueue = async () => {
-    if (isProcessingQueueRef.current) return;
-    if (syncQueueRef.current.length === 0) return;
-
-    isProcessingQueueRef.current = true;
-
-    while (syncQueueRef.current.length > 0) {
-      const remainingCount = syncQueueRef.current.length;
-      setCloudStatus(prev => ({
-        ...prev,
-        isSyncing: true,
-        text: remainingCount > 1 ? `Syncing (${remainingCount} left)...` : 'Syncing...'
-      }));
-
-      const task = syncQueueRef.current.shift();
-      try {
-        await task.execute();
-      } catch (err) {
-        console.error('Queue task error:', err);
-      }
-      // Brief pause between requests to respect rate limits
-      await new Promise(r => setTimeout(r, 120));
-    }
-
-    isProcessingQueueRef.current = false;
-    setCloudStatus(prev => ({ ...prev, isSyncing: false, text: 'Supabase DB (Private)' }));
-  };
-
-  const enqueueSyncTask = (taskKey, executeFn) => {
-    const existingIdx = syncQueueRef.current.findIndex(t => t.key === taskKey);
-    const taskObj = { key: taskKey, execute: executeFn };
-    if (existingIdx !== -1) {
-      syncQueueRef.current[existingIdx] = taskObj; // replace pending task with newer value
-    } else {
-      syncQueueRef.current.push(taskObj);
-    }
-    processSyncQueue();
-  };
-
-  // Browser Refresh / Tab Close Guard: Prevents losing pending queue tasks
+  // Tab close / refresh guard while changes are still waiting to be sent
   useEffect(() => {
     const handleBeforeUnload = (e) => {
-      if (isProcessingQueueRef.current || syncQueueRef.current.length > 0) {
+      if (getPendingCount && getPendingCount() > 0) {
         e.preventDefault();
-        e.returnValue = 'You have unsaved changes syncing in the background. Are you sure you want to leave?';
+        e.returnValue = 'Some changes have not reached the server yet. They are kept on this device and will be sent next time you open the app online.';
         return e.returnValue;
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, []);
+  }, [getPendingCount]);
 
   // Persist State to Tenant-Scoped LocalStorage
   useEffect(() => {
@@ -98,7 +58,7 @@ export function useTrackerSync({
     }
   }, [auth?.email, weeks, customers, weeklyReconciliation, archive, getTenantStorageKey]);
 
-  // Ingest cloud data
+  // Ingest data loaded from elsewhere
   const ingestCloudData = (data) => {
     if (!data) return;
     if (Array.isArray(data.customers)) {
@@ -118,73 +78,72 @@ export function useTrackerSync({
     }
   };
 
-  // Dedicated Supabase DB Auto-Pull (High-performance direct PostgreSQL query with sleeping-DB retry)
+  // Load the ledger from the tenant database (with sleeping-DB retry)
   useEffect(() => {
-    if (auth?.isSupabaseTenant && tenantClient) {
-      let isMounted = true;
-      let retryAttempts = 0;
-      const maxRetries = 2;
+    if (!auth?.isSupabaseTenant || !tenantClient) return;
+    let isMounted = true;
+    let retryAttempts = 0;
+    const maxRetries = 2;
 
-      const attemptFetch = () => {
+    const attemptFetch = async () => {
+      if (!isMounted) return;
+      setCloudStatus({ connected: true, isSyncing: true, text: 'Supabase DB (Connecting...)', error: null });
+
+      // 1. Send unsent changes first. If some can't be sent yet (offline),
+      //    keep showing the copy on this device instead of older server data.
+      if (flushOutbox) {
+        const stillWaiting = await flushOutbox();
         if (!isMounted) return;
-        setCloudStatus({ connected: true, isSyncing: true, text: 'Supabase DB (Connecting...)', error: null });
-
-        fetchTenantLedgerData(tenantClient)
-          .then(res => {
-            if (!isMounted) return;
-            if (res) {
-              if (Array.isArray(res.customers)) setCustomers(normalizeCustomers(res.customers));
-              if (Array.isArray(res.weeks) && res.weeks.length > 0) setWeeks(res.weeks);
-              if (res.weeklyReconciliation) setWeeklyReconciliation(res.weeklyReconciliation);
-              if (Array.isArray(res.archive)) setArchive(res.archive);
-              setCloudStatus({ connected: true, isSyncing: false, text: 'Supabase DB (Private)', error: null });
-              addToast(`Connected to private Supabase DB (${res.customers?.length || 0} records)!`, 'success');
-            }
-          })
-          .catch(err => {
-            if (!isMounted) return;
-            const errMsg = String(err?.message || err);
-
-            // Tenant DB rejected the request (locked down, session missing or expired):
-            // ask the operator to sign in again instead of showing an empty ledger.
-            const code = String(err?.code || '');
-            if (code === '42501' || code === 'PGRST301' || /permission denied|JWT expired|invalid jwt/i.test(errMsg)) {
-              handleLogout();
-              addToast('Please sign in again to open your private ledger.', 'warning');
-              return;
-            }
-
-            const isSleepingOrTimeout = errMsg.includes('Failed to fetch') || errMsg.includes('503') || errMsg.includes('504') || errMsg.includes('timed out');
-
-            if (isSleepingOrTimeout && retryAttempts < maxRetries) {
-              retryAttempts++;
-              setCloudStatus({ connected: false, isSyncing: true, text: `Waking Database (Attempt ${retryAttempts}/${maxRetries})...`, error: errMsg });
-              setTimeout(attemptFetch, 2500);
-              return;
-            }
-
-            console.error('Supabase load error:', err);
-            setCloudStatus({ connected: false, isSyncing: false, text: 'Supabase Error', error: errMsg });
-            addToast(`Supabase connection error: ${errMsg}`, 'error');
+        if (stillWaiting > 0) {
+          setCloudStatus({
+            connected: false,
+            isSyncing: false,
+            text: 'Showing data saved on this device',
+            error: null
           });
-      };
+          addToast(`Showing data saved on this device. ${stillWaiting} change(s) will be sent when you're back online.`, 'warning');
+          return;
+        }
+      }
 
-      attemptFetch();
-      return () => { isMounted = false; };
-    }
-  }, [auth?.isSupabaseTenant, tenantClient]);
+      try {
+        const res = await fetchTenantLedgerData(tenantClient);
+        if (!isMounted || !res) return;
+        if (Array.isArray(res.customers)) setCustomers(normalizeCustomers(res.customers));
+        if (Array.isArray(res.weeks) && res.weeks.length > 0) setWeeks(res.weeks);
+        if (res.weeklyReconciliation) setWeeklyReconciliation(res.weeklyReconciliation);
+        if (Array.isArray(res.archive)) setArchive(res.archive);
+        setCloudStatus({ connected: true, isSyncing: false, text: 'Supabase DB (Private)', error: null });
+      } catch (err) {
+        if (!isMounted) return;
+        const errMsg = String(err?.message || err);
 
-  const debounceSync = (key, fn, delay = 800) => {
-    if (syncDebounceTimers.current[key]) clearTimeout(syncDebounceTimers.current[key]);
-    syncDebounceTimers.current[key] = setTimeout(() => {
-      delete syncDebounceTimers.current[key];
-      fn();
-    }, delay);
-  };
+        // Tenant DB rejected the request (locked down, session missing or expired):
+        // ask the operator to sign in again instead of showing an empty ledger.
+        const code = String(err?.code || '');
+        if (code === '42501' || code === 'PGRST301' || /permission denied|JWT expired|invalid jwt/i.test(errMsg)) {
+          handleLogout();
+          addToast('Please sign in again to open your private ledger.', 'warning');
+          return;
+        }
 
-  return {
-    debounceSync,
-    enqueueSyncTask,
-    ingestCloudData
-  };
+        const isSleepingOrTimeout = /Failed to fetch|503|504|timed out/i.test(errMsg);
+        if (isSleepingOrTimeout && retryAttempts < maxRetries) {
+          retryAttempts++;
+          setCloudStatus({ connected: false, isSyncing: true, text: `Waking Database (Attempt ${retryAttempts}/${maxRetries})...`, error: errMsg });
+          setTimeout(attemptFetch, 2500);
+          return;
+        }
+
+        console.error('Supabase load error:', err);
+        setCloudStatus({ connected: false, isSyncing: false, text: 'Showing data saved on this device', error: errMsg });
+        addToast('Could not reach your database. Showing data saved on this device; changes will be sent when the connection is back.', 'warning');
+      }
+    };
+
+    attemptFetch();
+    return () => { isMounted = false; };
+  }, [auth?.isSupabaseTenant, tenantClient]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return { ingestCloudData };
 }
