@@ -374,7 +374,13 @@ serve(withCors(async (req: Request) => {
               const missing = res.error.code === '42P01' || res.error.code === 'PGRST205' || /does not exist|could not find/i.test(res.error.message || '');
               return [r.id, missing ? { status: 'ok', version: 0 } : { status: 'error', version: null, message: res.error.message }];
             }
-            return [r.id, { status: 'ok', version: Number(res?.data?.[0]?.version) || 0 }];
+            const version = Number(res?.data?.[0]?.version) || 0;
+            let sizeBytes: number | null = null;
+            if (version >= 4) {
+              const { data: size } = await client.rpc('finroute_database_size');
+              sizeBytes = size === null || size === undefined ? null : Number(size);
+            }
+            return [r.id, { status: 'ok', version, sizeBytes }];
           } catch (e) {
             return [r.id, { status: 'error', version: null, message: String((e as Error)?.message || e) }];
           }
@@ -446,6 +452,20 @@ serve(withCors(async (req: Request) => {
         if (error) throw error;
         console.log(`Backup download link created by ${callerUser.email}: ${path}`);
         return jsonResponse({ success: true, url: data?.signedUrl });
+      }
+
+      // ------------------------------------------------------------------------
+      // 4a4. APP ERROR REPORTS (already scrubbed of personal data)
+      // ------------------------------------------------------------------------
+      case 'list_client_errors': {
+        const limit = Math.min(Number(payload?.limit) || 100, 500);
+        const { data, error } = await serviceClient
+          .from('master_client_errors')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(limit);
+        if (error) throw error;
+        return jsonResponse({ success: true, errors: data || [] });
       }
 
       // ------------------------------------------------------------------------

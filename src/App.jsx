@@ -17,6 +17,7 @@ import { getSavedLanguage, setSavedLanguage } from './utils/translations';
 import { getTenantClient } from './services/tenantDatabaseService';
 import { useOutbox } from './hooks/useOutbox';
 import SyncStatusBar from './components/SyncStatusBar';
+import { reportError } from './services/errorReporter';
 
 // Lazy-loaded components for optimal initial bundle and performance
 const LoginScreen = lazy(() => import('./components/LoginScreen'));
@@ -98,6 +99,7 @@ export default function App() {
     let lastShown = 0;
     const notify = (reason) => {
       console.error('Unhandled error:', reason);
+      reportError('error', reason);
       if (Date.now() - lastShown < 5000) return; // avoid a burst of identical toasts
       lastShown = Date.now();
       setToasts(prev => [...prev.slice(-3), {
@@ -122,6 +124,7 @@ export default function App() {
     tenantClient,
     email: auth?.email || null,
     onPermanentFailure: (entry, message) => {
+      reportError('save_failed', { message: `${entry.type}: ${message}` });
       addToast(`Couldn't save ${entry.label || 'a change'}: ${message}`, 'error');
     }
   });

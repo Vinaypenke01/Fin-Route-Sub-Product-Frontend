@@ -62,6 +62,7 @@ import DeleteTenantModal from './DeleteTenantModal';
 import TenantVersionBadge from './TenantVersionBadge';
 import { passwordProblem } from '../../supabase/functions/_shared/password.ts';
 import ActiveSessionInfo from './ActiveSessionInfo';
+import ClientErrorsPanel from './ClientErrorsPanel';
 
 // Loaded only when the admin opens the Setup Guide tab
 const TenantSetupGuide = lazy(() => import('./TenantSetupGuide'));
@@ -1184,16 +1185,19 @@ export default function SuperAdminPanel({ onBackToApp }) {
       </Suspense>
     ) : activeAdminTab === 'logs' ? (
       /* Keep-Alive & Database Health Logs Section */
-      <SuperAdminHealthLogs
-        healthLogs={healthLogs}
-        isLoadingHealthLogs={isLoadingHealthLogs}
-        loadHealthLogs={loadHealthLogs}
-        handleClearHealthLogs={handleClearHealthLogs}
-        handlePingAllDatabases={handlePingAllDatabases}
-        isPingingAll={isPingingAll}
-        pingReport={pingReport}
-        tenantsCount={tenants.length}
-      />
+      <>
+        <SuperAdminHealthLogs
+          healthLogs={healthLogs}
+          isLoadingHealthLogs={isLoadingHealthLogs}
+          loadHealthLogs={loadHealthLogs}
+          handleClearHealthLogs={handleClearHealthLogs}
+          handlePingAllDatabases={handlePingAllDatabases}
+          isPingingAll={isPingingAll}
+          pingReport={pingReport}
+          tenantsCount={tenants.length}
+        />
+        <ClientErrorsPanel />
+      </>
     ) : (
       /* Admin Configuration Section */
       <div className="space-y-6">

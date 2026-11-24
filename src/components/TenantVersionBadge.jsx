@@ -1,5 +1,6 @@
 import React from 'react';
 import { LATEST_TENANT_VERSION } from '../config/tenantUpdates';
+import { describeDbSize } from '../utils/dbSize';
 
 /**
  * Shows which tenant database update a tenant has applied.
@@ -28,10 +29,23 @@ export default function TenantVersionBadge({ info, onOpenGuide }) {
   }
 
   const v = Number(info.version) || 0;
+  const size = describeDbSize(info.sizeBytes);
+  const sizeBadge = size && (
+    <span
+      className={`${base} ${size.level === 'danger' ? 'bg-red-50 text-red-700 border-red-300' : size.level === 'warn' ? 'bg-amber-50 text-amber-800 border-amber-300' : 'bg-slate-50 text-slate-600 border-slate-200'}`}
+      title={size.level === 'ok' ? 'Database size' : 'Nearly full: plan an upgrade of this Supabase project (see Setup Guide)'}
+    >
+      {size.level !== 'ok' && '⚠ '}{size.text}
+    </span>
+  );
+
   if (v >= LATEST_TENANT_VERSION) {
     return (
-      <span className={`${base} bg-emerald-50 text-emerald-700 border-emerald-200`} title="All tenant updates applied">
-        DB v{v} · up to date
+      <span className="inline-flex flex-wrap gap-1">
+        <span className={`${base} bg-emerald-50 text-emerald-700 border-emerald-200`} title="All tenant updates applied">
+          DB v{v} · up to date
+        </span>
+        {sizeBadge}
       </span>
     );
   }

@@ -470,6 +470,16 @@ export async function endTenantSession(tenantId) {
   }
 }
 
+/** Super-Admin: recent app error reports from operators' devices. */
+export async function listClientErrors(limit = 100) {
+  try {
+    const res = await invokeAdminEdgeFunction('admin-tenants', 'list_client_errors', { limit });
+    return res?.success ? { success: true, errors: res.errors || [] } : { success: false, message: res?.message, errors: [] };
+  } catch (err) {
+    return { success: false, message: await edgeErrorMessage(err, 'Could not load error reports.'), errors: [] };
+  }
+}
+
 /** Super-Admin: backup runs for one tenant (newest first). */
 export async function listTenantBackups(tenantId) {
   try {

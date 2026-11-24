@@ -1,4 +1,5 @@
 import React from 'react';
+import { reportError } from '../services/errorReporter';
 
 /**
  * Catches rendering crashes so the user sees a recovery screen instead of a
@@ -16,8 +17,8 @@ export default class ErrorBoundary extends React.Component {
   }
 
   componentDidCatch(error, info) {
-    // Phase 6 will forward this to error reporting (with personal data removed).
     console.error('UI crash caught by ErrorBoundary:', error, info?.componentStack);
+    reportError('crash', error, info?.componentStack || '');
   }
 
   handleRetry = () => {

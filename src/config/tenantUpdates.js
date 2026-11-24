@@ -9,6 +9,7 @@
 import update001 from '../../supabase/tenant_updates/001_schema_version.sql?raw';
 import update002 from '../../supabase/tenant_updates/002_session_control.sql?raw';
 import update003 from '../../supabase/tenant_updates/003_change_log.sql?raw';
+import update004 from '../../supabase/tenant_updates/004_database_size.sql?raw';
 
 export const TENANT_UPDATES = [
   {
@@ -31,6 +32,13 @@ export const TENANT_UPDATES = [
     title: 'Change history',
     summary: 'The database records every change to payments, customers, weeks and cash settlements (old value, new value, who, when). Shown under History in the app and in the admin activity view.',
     sql: update003,
+  },
+  {
+    version: 4,
+    file: 'supabase/tenant_updates/004_database_size.sql',
+    title: 'Database size reporting',
+    summary: 'Shows how full this database is in the Tenants Directory, with a warning before the free-tier limit is reached.',
+    sql: update004,
   },
 ];
 

@@ -215,9 +215,10 @@ const MASTER_MIGRATIONS = [
   'supabase/migrations/20261125_tenant_delete.sql',
   'supabase/migrations/20261126_active_sessions.sql',
   'supabase/migrations/20261127_backups.sql',
+  'supabase/migrations/20261128_client_errors.sql',
 ];
 
-const DEPLOY_FUNCTIONS_CMD = `npx supabase functions deploy tenant-login tenant-session tenant-backup admin-tenants keep-alive super-admin-login --project-ref ${MASTER_REF}`;
+const DEPLOY_FUNCTIONS_CMD = `npx supabase functions deploy tenant-login tenant-session tenant-backup report-error admin-tenants keep-alive super-admin-login --project-ref ${MASTER_REF}`;
 const BACKUP_SECRET_GEN_CMD = `$s = [guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N'); $s`;
 const BACKUP_SECRET_SET_CMD = `npx supabase secrets set --project-ref ${MASTER_REF} BACKUP_CRON_SECRET=PASTE_THE_VALUE_HERE`;
 const ALLOWED_ORIGINS_CMD = `npx supabase secrets set --project-ref ${MASTER_REF} "ALLOWED_ORIGINS=${SITE_URL},http://localhost:5173,https://*--sub-project001.netlify.app"`;
@@ -548,6 +549,23 @@ export default function TenantSetupGuide({ onOpenAddTenant }) {
             Export as CSV), then delete the project in Supabase: Project Settings → General → <b>Delete project</b>.
           </li>
         </ul>
+      </Section>
+
+      <Section title="Alerts: know about problems early">
+        <ul className="list-disc pl-5 space-y-1.5">
+          <li><b>Failed nightly backups or keep-alive</b> turn the GitHub Action red. Turn on emails: GitHub → your profile → <b>Settings</b> → <b>Notifications</b> → <b>Actions</b> → tick <b>Send notifications for failed workflows only</b>.</li>
+          <li><b>App errors</b> from operators' phones appear in <Click>Keep-Alive & Health Logs</Click> → <b>App errors from operators</b>. Check it weekly, or whenever an operator reports a problem.</li>
+          <li><b>Database size</b> shows next to each tenant's DB version (after tenant update 004). It turns amber at 70% and red at 90% of the free-tier 500 MB.</li>
+        </ul>
+      </Section>
+
+      <Section title="Upgrading a tenant to a paid Supabase plan">
+        <p>Upgrade when the size badge turns amber, when a tenant can't tolerate the free tier pausing, or when you want Supabase's own daily backups as a second layer.</p>
+        <ol className="list-decimal pl-5 space-y-1.5">
+          <li>Supabase dashboard → the tenant's <b>organization</b> → <b>Billing</b> → choose the <b>Pro</b> plan. The project, URL and keys stay the same, so nothing changes in FinRoute.</li>
+          <li>After upgrading, the database limit is much larger; the size badge still uses 500 MB as its warning line, so treat amber/red as informational for paid tenants.</li>
+          <li>Paid projects don't pause, but keep-alive still pings them harmlessly.</li>
+        </ol>
       </Section>
 
       <Section title="One-time platform setup (already done; for reference)">
