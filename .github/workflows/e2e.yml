@@ -34,10 +34,12 @@ jobs:
         env:
           # Empty = build this branch and test it locally (public tests only).
           E2E_BASE_URL: ${{ github.event.inputs.base_url }}
-          # Signed-in tests run only when these repository secrets exist,
-          # and must point at a DEDICATED TEST TENANT, never a real business.
-          E2E_TENANT_EMAIL: ${{ secrets.E2E_TENANT_EMAIL }}
-          E2E_TENANT_PASSWORD: ${{ secrets.E2E_TENANT_PASSWORD }}
+          # Signed-in tests run only on a manual run against a real site
+          # (base_url set): the local build made here has no Supabase settings,
+          # so nobody can sign in to it. The secrets must point at a
+          # DEDICATED TEST TENANT, never a real business.
+          E2E_TENANT_EMAIL: ${{ github.event_name == 'workflow_dispatch' && inputs.base_url != '' && secrets.E2E_TENANT_EMAIL || '' }}
+          E2E_TENANT_PASSWORD: ${{ github.event_name == 'workflow_dispatch' && inputs.base_url != '' && secrets.E2E_TENANT_PASSWORD || '' }}
         run: npx playwright test
 
       - name: Upload report on failure
