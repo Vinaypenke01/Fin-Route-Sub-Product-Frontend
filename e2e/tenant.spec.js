@@ -73,13 +73,15 @@ test('sign in, save a payment, reload, it is still there', async ({ page }) => {
 
     // The change appears in History
     await page.getByRole('button', { name: /History/i }).click();
-    const history = page.getByRole('dialog', { name: /Change history/i });
+    // The History window (found by its search box, so this works with or without the dialog role)
+    const history = page.locator('div.fixed.inset-0').filter({ has: page.getByPlaceholder(/Search by customer/i) });
+    await expect(history).toBeVisible({ timeout: 15_000 });
     const entry = history.getByText(/Payment (changed|added|deleted)/i).first();
-    const notice = history.getByText(/isn't switched on|Couldn't load history|No changes recorded/i).first();
-    await expect(entry.or(notice)).toBeVisible({ timeout: 30_000 });
-    if (await notice.isVisible()) {
-      throw new Error(`History did not list the payment change. It says: "${await notice.innerText()}". ` +
-        'Check the test tenant shows v5 in the admin panel (tenant update 003 adds History).');
+    try {
+      await expect(entry).toBeVisible({ timeout: 30_000 });
+    } catch {
+      const shown = (await history.innerText().catch(() => '')).replace(/\s+/g, ' ').slice(0, 600);
+      throw new Error(`History did not list the payment change. The window shows: "${shown}"`);
     }
     await history.getByRole('button', { name: 'Close' }).click();
     await expect(history).toHaveCount(0);
