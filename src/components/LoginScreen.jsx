@@ -9,6 +9,7 @@ export default function LoginScreen({ onLoginSuccess, onBackToLanding }) {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
+  const [showForgot, setShowForgot] = useState(false);
   const [consentGiven, setConsentGiven] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -68,6 +69,8 @@ export default function LoginScreen({ onLoginSuccess, onBackToLanding }) {
           tenantAnonKey: res.tenantAnonKey,
           tenantSession: res.tenantSession || null,
           tenantAuthRequired: Boolean(res.tenantAuthRequired),
+          deviceSessionManaged: Boolean(res.deviceSessionManaged),
+          mustChangePassword: Boolean(res.mustChangePassword),
           expiry: res.expiresAt || null,
           rememberMe
         });
@@ -212,7 +215,20 @@ export default function LoginScreen({ onLoginSuccess, onBackToLanding }) {
               />
               <span>Keep me signed in for 7 days</span>
             </label>
+            <button
+              type="button"
+              onClick={() => setShowForgot(v => !v)}
+              className="text-blue-600 hover:text-blue-800 font-semibold cursor-pointer"
+            >
+              Forgot password?
+            </button>
           </div>
+          {showForgot && (
+            <div className="p-2.5 rounded-lg bg-blue-50 border border-blue-100 text-[11px] text-slate-700" role="status">
+              Ask your FinRoute administrator to reset it. They will give you a new password; you can then change it
+              yourself from the <b>Password</b> button after signing in.
+            </div>
+          )}
 
           {/* Legal Consent Agreement */}
           <div className={`p-2.5 rounded-lg border text-xs transition-colors ${

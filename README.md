@@ -7,265 +7,118 @@
 
 ---
 
-## 📌 Project Agenda & Overview
+## What it is
 
-**FinRoute Collect** is an enterprise-grade, high-performance web ledger engineered specifically for microfinance institutions, field collection officers, and credit managers conducting weekly Sunday loan collections.
+FinRoute Collect is a web ledger for weekly (Sunday) microfinance collections. Each
+business (**tenant**) gets its own private Supabase PostgreSQL database; field
+operators record payments per customer per week, and the app works out balances,
+weekly collections and rolling cash. English and Telugu (తెలుగు) are supported.
 
-### The Problem It Solves
-Traditional microfinance operations rely heavily on fragile physical paper ledgers or cumbersome spreadsheets that:
-- Require repetitive manual calculations for customer balances, overdue amounts, and rolling cash.
-- Lack freeze panes and sticky navigation on field smartphones.
-- Fail when field agents are offline or working in low-connectivity rural areas.
-- Introduce transcription errors between loan disbursements, collections, expenses, and bank deposits.
-- Lack multi-tenant database isolation, data security hardening, and regional language support.
+Live: https://sub-project.fin-route.site (operators) · `/#admin` (FinRoute administrators)
 
-### The FinRoute Mission
-FinRoute Collect delivers a **modern, secure, multi-tenant, offline-first digital ledger** that:
-1. **Accelerates Collections**: Rapid inline payment entry with zero page reloads.
-2. **Multi-Tenant Architecture**: Supports both dedicated Supabase PostgreSQL database instances per tenant and Google Sheets integration.
-3. **Automates Financial Math**: Instant, real-time calculations for paid amounts, remaining balances, and cash reconciliations.
-4. **Optimized for Field Mobility**: Sticky table headers and pinned freeze panes ensure effortless navigation on mobile devices and desktop computers.
-5. **Native Dual-Language Localization**: Full English and Telugu (తెలుగు) dictionary support with 1-click WhatsApp customer payment reminders.
-6. **Enterprise Security**: Sanitized against XSS, CSV formula injection, and unauthorized data leakage.
+## Features
 
----
+| Area | What you get |
+|---|---|
+| **Ledger** | Customers grouped by village, weekly payment columns (Week 1 date cascades +7 days), balances, Paid Off / Active status, loan renewal and archive |
+| **Cash settlement** | Opening cash, collections, bank deposit, new loans, expenses and salaries, rolled forward week to week |
+| **Reliable saving** | Every change is stored on the device first and sent to the database in order, retried automatically when the connection returns; nothing is lost if the tab closes or the signal drops |
+| **One device at a time** | While an account is signed in on one device, another device is refused; admins can end a session for a lost phone |
+| **Change history** | The database records every change (old value, new value, who, when); operators see it under **History** |
+| **Backups** | Nightly server backups of every tenant (30 daily + 12 monthly), admin downloads, operator **My data** download, tested restore script |
+| **Exports** | PDF ledger report (landscape) and CSV (Excel-safe, Telugu-friendly, protected against formula injection) |
+| **Admin panel** | Tenants, admins, keep-alive and health, database version and size per tenant, active sessions, backups, app error reports, and a step-by-step **Tenant Setup Guide** |
 
-## 🚀 Key Features & Capabilities
+## Architecture
 
-| Feature | Description |
-| :--- | :--- |
-| **Dedicated Multi-Tenancy** | Independent PostgreSQL databases per tenant (Supabase) or Google Sheets sync with central authentication. |
-| **Super Admin Control Center** | Accessible via `#admin` route to provision tenants, manage admin accounts, monitor active leases, and inspect live audit logs. |
-| **Dual-Language i18n** | Full client-side localization for **English** and **తెలుగు (Telugu)** with local persistence and parameter interpolation. |
-| **1-Click WhatsApp Reminders** | Tap `💬` next to any customer phone number to send a polite payment reminder in Telugu or English. |
-| **Live Database Indicator** | Pulsating active green dot integrated directly on the *FinRoute Collect Sub-Product* header badge. |
-| **Weekly Collection Matrix** | Scalable multi-week tracking (Week 1 to Week 10+) with auto-calculated status and totals. |
-| **Smart Date Cascading** | Edit Week 1 date; all subsequent weeks automatically calculate and shift by `+7 days`. |
-| **Sticky Navigation & Freeze Panes** | Table headings remain pinned at the top on both mobile and desktop. Customer name, ID, and serial number stay frozen on the left during horizontal scrolling. |
-| **Cash Settlement Engine** | Reconciles opening cash, collections, bank deposits, new disbursements, expenses, and salaries. |
-| **Village Route Grouping** | Group customers by village dividers (`రాంపూర్`, `కొత్తపేట`, etc.) and reorder rows to match collection routes. |
-| **One-Click Quick Call** | Tap the `📞` icon next to any customer to directly dial them from mobile devices. |
-| **Loan Renewal & Archive** | Archive completed/renewed loans with historical audit logs and clean slate for new cycles. |
-| **Branded PDF Ledger Export** | Generate print-ready, high-resolution PDF collection reports on demand with XSS sanitization. |
-| **Secure CSV Export** | Export route ledgers to Excel/CSV with complete protection against CSV Formula / DDE Injection. |
-
----
-
-## 🌐 Localization & Telugu (తెలుగు) Support
-
-FinRoute Collect includes a dictionary-based translation engine ([src/utils/translations.js](file:///c:/Users/genai/Downloads/Sheet/tracker-app/src/utils/translations.js)):
-
-- **Header Language Switcher**: Toggle seamlessly between `🇬🇧 English` and `🇮🇳 తెలుగు`.
-- **Domain-Tailored Terminology**: Standardized for microfinance in Andhra Pradesh & Telangana:
-  - *Weekly Tracker* → *వారపు ట్రాకర్*
-  - *Original Capital* → *అసలు మొత్తం*
-  - *Total Payable* → *మొత్తం చెల్లించవలసినది*
-  - *Outstanding Balance* → *మిగిలిన బకాయి*
-  - *Active Loans* → *యాక్టివ్ లోన్లు*
-  - *Paid Off* → *పూర్తయింది*
-- **WhatsApp Message Templates**:
-  - **Telugu**: *"నమస్కారం {name} గారు, FinRoute నుండి రిమైండర్: మీ వారం లోన్ వాయిదా మొత్తం ₹{amount} చెల్లించవలసి ఉంది. మిగిలిన మొత్తం బకాయి: ₹{balance}. ధన్యవాదాలు!"*
-  - **English**: *"Namaste {name} garu, reminder from FinRoute: Your weekly installment of ₹{amount} is due. Remaining loan balance: ₹{balance}. Thank you!"*
-
----
-
-## 🔒 Security Hardening & Data Protection
-
-1. **Stored XSS Elimination in PDF Reports**:
-   - All dynamic customer fields (`name`, `phone`, `villageName`, `date`, `status`) are strictly sanitized via an `escapeHtml()` sanitizer prior to rendering into `html2pdf.js`.
-2. **CSV Formula Injection (DDE) Mitigation**:
-   - In [src/utils/exportCSV.js](file:///c:/Users/genai/Downloads/Sheet/tracker-app/src/utils/exportCSV.js), all cell values starting with `=, +, -, @, \t, \r` are automatically prepended with a single quote (`'`), preventing malicious code execution in Excel or Google Sheets.
-3. **Super Admin Authentication Guard**:
-   - Super admin login ([src/components/SuperAdminPanel.jsx](file:///c:/Users/genai/Downloads/Sheet/tracker-app/src/components/SuperAdminPanel.jsx)) incorporates strict regex email format validation, password minimum length verification, and sanitized state management.
-4. **Row Level Security (RLS)**:
-   - Supabase master database tables (`master_tenants`, `master_super_admins`, `master_audit_logs`) are protected by explicit RLS policies prohibiting unauthorized anonymous table listing or modification.
-5. **No Code File Bloat**:
-   - Strict architectural guideline ensuring all project files remain strictly under **1,500 lines** of code for clean maintainability and modularity.
-
----
-
-## 🧠 Core Financial Logics
-
-### 1. Weekly Date Cascading Logic
-- In microfinance Sunday collections, all collection cycles occur every 7 days.
-- Field officers enter or edit the **Week 1 Date** (e.g., `25/10/2026`).
-- The application parses the date and cascades `+7 days` to Week 2 (`01/11/2026`), Week 3 (`08/11/2026`), and all subsequent weeks.
-- Subsequent week dates are locked from accidental individual modification to prevent date corruption across the route.
-
-### 2. Live Customer Account Balance Calculation
-For each customer row:
-$$\text{Total Paid} = \sum (\text{Payments in Week 1, Week 2, \dots, Week } N)$$
-$$\text{Balance Due} = \text{Disbursed Amount} - \text{Total Paid}$$
-
-- **Status Badges**:
-  - If $\text{Balance Due} \le 0$: Flagged with **Paid Off** / **పూర్తయింది**.
-  - If $\text{Balance Due} > 0$: Flagged with **Active** / **యాక్టివ్**.
-
-### 3. Cash Reconciliation & Rolling Cash Engine
-At the bottom of each weekly column:
-$$\text{Net Cash in Hand} = \text{Opening Cash} + \text{Collections} - \text{Bank Deposit} - \text{New Disbursed} - \text{Expenses} - \text{Salaries}$$
-
-- **Opening Cash**: Opening balance at the start of the collection day.
-- **Collections**: Auto-summed from all customer payment inputs for that week column.
-- **Bank Deposit**: Amount deposited directly into the bank during the collection day.
-- **New Disbursed**: Cash disbursed to new or renewing borrowers during the day.
-- **Expenses**: Field operational costs (fuel, travel, meals, stationery).
-- **Salaries**: Staff compensation or collection agent allowances paid out in cash.
-- **Rolling Cash**: The resulting net cash automatically rolls forward as the next week's opening balance.
-
----
-
-## 💻 Tech Stack & Architecture
-
-- **Frontend Core**: React 19 + Vite (Modern ES Modules)
-- **Styling**: Tailwind CSS v4 + Vanilla CSS Design Tokens
-- **Icons**: Lucide React
-- **Typography**:
-  - Telugu: `Noto Sans Telugu` (Google Fonts)
-  - English & Numbers: `Inter`
-- **PDF Generation**: `html2pdf.js` with DOM XSS escaping
-- **Multi-Tenant Databases**:
-  - **PostgreSQL**: Dedicated Supabase tenant databases (`supabase_tenant_template.sql`)
-  - **Master Gateway**: Central master Supabase instance (`supabase_master_setup.sql`)
-  - **Google Sheets**: Bidirectional Google Apps Script engine (`Code.gs`)
-- **Offline Persistence**: Browser `localStorage` with JSON serialization & optimistic sync queue
-
----
-
-## 📁 Project Directory Structure
-
-```text
-tracker-app/
-├── public/                         # Static assets (logos, icons, redirects)
-├── src/
-│   ├── assets/                     # Brand graphics & icons
-│   ├── components/
-│   │   ├── AppModals.jsx           # Reusable app modals wrapper
-│   │   ├── ArchiveTable.jsx        # Lazy-loaded historical loan archive
-│   │   ├── Footer.jsx              # Platform footer & finroute-collector branding
-│   │   ├── Header.jsx              # Navigation, language switcher & live status dot
-│   │   ├── ImportSheetModal.jsx    # Legacy Google Sheets to Supabase importer
-│   │   ├── KpiDeck.jsx             # Key performance indicator summary cards
-│   │   ├── LandingPage.jsx         # Product showcase with WhatsApp lead CTA
-│   │   ├── LoadingScreen.jsx       # Elegant loading skeleton screens
-│   │   ├── LoginScreen.jsx         # PIN authentication & tenant portal gate
-│   │   ├── Modals.jsx              # Add customer, renew, and week modals
-│   │   ├── SuperAdminModals.jsx    # Super Admin tenant management dialogs
-│   │   ├── SuperAdminPanel.jsx     # Master tenant provisioning & audit logs
-│   │   ├── Toast.jsx               # Floating toast notifications
-│   │   ├── Toolbar.jsx             # Search, filter, and tab navigation
-│   │   └── TrackerTable.jsx        # Main ledger matrix with frozen sticky panes
-│   ├── hooks/
-│   │   ├── useLedgerCalculations.js# Financial calculation logic & totals
-│   │   └── useTrackerSync.js       # Auto-sync & debounced cloud queue
-│   ├── services/
-│   │   ├── cloudService.js         # Google Apps Script cloud sync client
-│   │   ├── masterAuthService.js    # Super Admin & tenant authentication
-│   │   ├── sessionService.js       # Secure session hydration & persistence
-│   │   └── tenantDatabaseService.js# Supabase PostgreSQL client & data layer
-│   ├── utils/
-│   │   ├── customerNormalization.js# Customer data schema sanitizer
-│   │   ├── exportCSV.js            # Hardened CSV exporter (DDE safe)
-│   │   ├── formatters.js           # Indian Rupee (₹) & date formatters
-│   │   ├── generatePdfReport.js    # XSS-sanitized PDF ledger generator
-│   │   └── translations.js         # English + Telugu i18n dictionary
-│   ├── App.jsx                     # Top-level state coordinator
-│   ├── index.css                   # Tailwind tokens & scrollbar utilities
-│   ├── initialData.js              # Fallback initial sample ledger data
-│   └── main.jsx                    # Application entry point
-├── supabase/
-│   ├── supabase_master_setup.sql   # Master multi-tenant DB setup script
-│   └── supabase_tenant_template.sql# Dedicated tenant database setup script
-├── Code.gs                         # Google Apps Script cloud sync engine
-├── .env.example                    # Environment variable template
-├── package.json                    # Dependencies & build scripts
-└── vite.config.js                  # Vite bundler configuration
+```
+Browser (React 19 + Vite, Netlify)
+ ├─ Master Supabase project  (ubhwoicsjmxslggltvaa)
+ │    • tenants, hashed credentials, tenant DB settings, secret keys in Vault
+ │    • Edge Functions: tenant-login, tenant-session, admin-tenants,
+ │      super-admin-login, keep-alive, tenant-backup, report-error
+ │    • private Storage bucket "tenant-backups"
+ └─ One Supabase project per tenant
+      • ledger tables, change_log, operator-only access (RLS)
+      • the operator signs in to it with a session issued by tenant-login
 ```
 
----
+### Security model (short)
+- Operators log in through `tenant-login`: master password check (bcrypt, lockout,
+  status, expiry), one-active-device rule, then a real sign-in to their own tenant
+  database. No passwords are stored in the browser.
+- Tenant databases are locked down (`supabase/tenant_lockdown.sql`): the public key
+  alone can read or write nothing; only signed-in operators can.
+- Tenant secret keys live in the master project's Vault and are used only by Edge
+  Functions. Edge Functions accept browser calls only from allowed origins.
+- Passwords: at least 10 characters for new passwords; weak old ones must be changed at next login.
 
-## 🛠️ How to Set Up and Run Locally
+## Project layout
 
-### Prerequisites
-- Node.js (version 18 or higher)
-- npm or yarn
+```
+src/
+  App.jsx                    ledger app (state, handlers)
+  components/                screens and dialogs (TrackerTable, SuperAdminPanel, TenantSetupGuide, ...)
+  hooks/useOutbox.js         reliable saving (device outbox + sender)
+  hooks/useTrackerSync.js    load from DB, device cache, unload guard
+  services/                  master/tenant DB access, outbox, sessions, error reporting
+  config/tenantUpdates.js    list of tenant database updates
+  utils/                     calculations, CSV/PDF export, change history text, backups
+supabase/
+  supabase_master_setup.sql, master_db_health_setup.sql, migrations/   master database
+  supabase_tenant_template.sql, tenant_lockdown.sql, tenant_updates/   tenant databases
+  functions/                 Edge Functions (+ _shared helpers)
+scripts/restore-backup.mjs   restore a backup into a tenant project
+tests/                       unit tests (Vitest)
+e2e/                         browser smoke tests (Playwright)
+docs/                        guides (verification, restore, improvement plan)
+```
 
-### 1. Installation
+## Local development
+
 ```powershell
-cd c:\Users\genai\Downloads\Sheet\tracker-app
-npm install
+npm ci
+copy .env.example .env.local   # then fill in the master URL and publishable key
+npm run dev                    # http://localhost:5173
 ```
 
-### 2. Environment Configuration
-Copy `.env.example` to `.env`:
+Only `VITE_*` variables reach the browser, and everything in them is public. Never
+put secret keys or passwords in `.env` files.
+
+## Tests
+
 ```powershell
-cp .env.example .env
-```
-Ensure your master environment variables are set:
-```env
-VITE_MASTER_AUTH_URL=https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec
-VITE_MASTER_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
-VITE_MASTER_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
+npm test            # unit tests (ledger maths, outbox, sessions, backups, ...)
+npm run lint
+npm run test:e2e    # browser smoke tests on a local build
 ```
 
-### 3. Start Development Server
-```powershell
-npm run dev
-```
-Open your browser at `http://localhost:5173`.
+Signed-in end-to-end tests need a **dedicated test tenant**
+(`E2E_TENANT_EMAIL`, `E2E_TENANT_PASSWORD`). CI (GitHub Actions) runs lint, unit tests,
+the build, a check that no customer data or secret keys end up in the bundle, and the
+public browser tests on every pull request.
 
-### 4. Build for Production
-```powershell
-npm.cmd run build
-```
-The optimized bundle will be compiled to the `dist/` directory in under 500ms.
+## Deploying changes
 
----
+1. **Master database** (SQL Editor, in order, each safe to re-run):
+   `supabase_master_setup.sql`, `master_db_health_setup.sql`, then every file in
+   `supabase/migrations/` by date.
+2. **Edge Functions**
+   ```powershell
+   npx supabase functions deploy tenant-login tenant-session tenant-backup report-error admin-tenants keep-alive super-admin-login --project-ref ubhwoicsjmxslggltvaa
+   ```
+   Secrets: `ALLOWED_ORIGINS`, `BACKUP_CRON_SECRET` (see the Setup Guide → one-time setup).
+3. **Tenant databases**: run any missing scripts from `supabase/tenant_updates/` in each
+   tenant's SQL Editor. The admin panel shows each tenant's version.
+4. **Frontend**: merge into `main`; Netlify builds and deploys.
 
-## 🚀 Deployment Instructions
+GitHub repository secrets used by workflows: `SUPABASE_MASTER_PUBLISHABLE_KEY`,
+`BACKUP_CRON_SECRET`, and optionally `E2E_TENANT_EMAIL` / `E2E_TENANT_PASSWORD`.
 
-### Deploy to Netlify / Vercel / Cloudflare Pages
+## Operations
 
-#### Method 1: Automatic Zip & Upload
-Run the bundled PowerShell script to build and package `dist.zip`:
-```powershell
-npm run build:zip
-```
-Drag and drop `dist.zip` into:
-- **Netlify Drop**: [https://app.netlify.com/drop](https://app.netlify.com/drop)
-- **Cloudflare Pages**: Direct upload tab
-- Any standard web hosting cPanel / public_html directory.
-
-#### Method 2: Command Line Deployment
-```bash
-# Vercel
-npx vercel deploy --prod
-
-# Netlify
-npx netlify deploy --prod --dir=dist
-```
-
----
-
-## 📱 User Guide: Field Operations
-
-1. **Authentication**: Enter tenant PIN or sign in via tenant credentials.
-2. **Language Selection**: Click `🇬🇧 English` or `🇮🇳 తెలుగు` in the top right to switch language.
-3. **Recording Payments**: Click any weekly payment cell, type the amount, and press `Enter` (or click away). Changes persist instantly.
-4. **WhatsApp Reminders**: Click `💬` next to any customer phone number to open a pre-filled reminder in the customer's preferred language.
-5. **Editing Customer Info**:
-   - Customer Name, Customer ID, Mobile Number, and Village Dividers are directly editable inline.
-   - Click `📅` to pick a date via the native calendar picker.
-6. **Cash Settlement Reconciliation**:
-   - Scroll to the bottom row of any week.
-   - Enter Cash in Hand, Bank Deposits, Expenses, and Salaries. Net cash carries forward automatically.
-7. **Report Exports**:
-   - Click **Download PDF** for a print-ready route ledger report.
-   - Click **Export CSV** for an Excel-compatible spreadsheet.
-
----
-
-## 📄 License & Intellectual Property
-
-Copyright © 2026 **FinRoute**. All rights reserved.  
-*FinRoute Collect — Enterprise Multi-Tenant Edition.*
+- **Add a tenant**: Admin panel → **Tenant Setup Guide** (8 steps, copy buttons).
+- **Backups and restore**: `docs/RESTORE_BACKUP.md`.
+- **Health**: Admin panel → Keep-Alive & Health Logs (database status, app errors).
+- **Checks after a release**: `docs/SECURITY_VERIFICATION_GUIDE.md`.
+- **Roadmap / decisions**: `docs/IMPROVEMENT_PLAN.md`.

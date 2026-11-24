@@ -17,7 +17,7 @@ function escapeHtml(str) {
  * Generates and downloads a complete Horizontal Landscape PDF Report
  * with Brand Logo, Telugu/English Customer List, Weekly Collections, and Cash Reconciliation Settlements.
  */
-export function generatePdfReport({
+export async function generatePdfReport({
   weeks,
   customers,
   weeklyReconciliation,
@@ -25,9 +25,18 @@ export function generatePdfReport({
   setIsGeneratingPDF,
   addToast
 }) {
+  // The PDF library (~900 kB) is only downloaded the first time it's needed
   if (!window.html2pdf) {
-    if (addToast) addToast('PDF library loading... please retry in a moment.', 'warning');
-    return;
+    if (addToast) addToast('Preparing PDF tools (first time only)...', 'info');
+    if (setIsGeneratingPDF) setIsGeneratingPDF(true);
+    try {
+      const { loadScriptOnce } = await import('./loadScript');
+      await loadScriptOnce('/html2pdf.bundle.min.js');
+    } catch (err) {
+      if (setIsGeneratingPDF) setIsGeneratingPDF(false);
+      if (addToast) addToast(err?.message || 'Could not load PDF tools.', 'error');
+      return;
+    }
   }
 
   if (addToast) addToast('Generating Landscape PDF with Brand Logo & Settlements...', 'info');

@@ -282,9 +282,10 @@ export async function addTenantCustomer(client, customer) {
     }
   }
 
+  // upsert (not insert) so a retried request after a lost response is harmless
   const { data, error } = await client
     .from('customers')
-    .insert([{
+    .upsert([{
       id: customer.id,
       name: customer.name,
       phone: customer.phone || '',
@@ -296,7 +297,7 @@ export async function addTenantCustomer(client, customer) {
       village_name: cleanVillageName,
       village_id: villageId,
       row_order: customer.rowOrder || 9999
-    }])
+    }], { onConflict: 'id' })
     .select()
     .single();
 
@@ -314,7 +315,7 @@ export async function deleteTenantCustomer(client, customerId, archiveRecord) {
   if (archiveRecord) {
     const { error: aErr } = await client
       .from('loan_archive')
-      .insert([{
+      .upsert([{
         id: archiveRecord.id,
         original_customer_id: archiveRecord.originalId || customerId,
         name: archiveRecord.name,
@@ -329,8 +330,9 @@ export async function deleteTenantCustomer(client, customerId, archiveRecord) {
         reason: archiveRecord.reason || 'Customer deleted by user',
         date_archived: new Date().toISOString().split('T')[0],
         payments_snapshot: archiveRecord.payments || {}
-      }]);
-    if (aErr) console.warn('Archive insert error on delete:', aErr);
+      }], { onConflict: 'id' });
+    // Keep the archive copy before deleting: stop (and retry later) if it fails
+    if (aErr) throw aErr;
   }
 
   // 2. Delete customer (cascade deletes payments)
@@ -351,7 +353,7 @@ export async function archiveAndRenewTenantCustomer(client, { customerId, newAmo
 
   // 1. Insert into loan_archive
   if (archiveRecord) {
-    await client.from('loan_archive').insert([{
+    const { error: aErr } = await client.from('loan_archive').upsert([{
       id: archiveRecord.id,
       original_customer_id: customerId,
       name: archiveRecord.name,
@@ -366,11 +368,13 @@ export async function archiveAndRenewTenantCustomer(client, { customerId, newAmo
       reason: 'Loan Renewed',
       date_archived: new Date().toISOString().split('T')[0],
       payments_snapshot: archiveRecord.payments || {}
-    }]);
+    }], { onConflict: 'id' });
+    if (aErr) throw aErr;
   }
 
   // 2. Reset active payments for this customer
-  await client.from('payments').delete().eq('customer_id', customerId);
+  const { error: pErr } = await client.from('payments').delete().eq('customer_id', customerId);
+  if (pErr) throw pErr;
 
   // 3. Update customer with new loan details
   let formattedDate = null;
@@ -422,7 +426,8 @@ export async function archiveLoansInTenantDb(client, loansToArchive = []) {
     date_archived: new Date().toISOString().split('T')[0],
     payments_snapshot: a.payments || {}
   }));
-  await client.from('loan_archive').upsert(rows, { onConflict: 'id' });
+  const { error } = await client.from('loan_archive').upsert(rows, { onConflict: 'id' });
+  if (error) throw error;
 }
 
 /**
@@ -462,12 +467,12 @@ export async function addTenantWeek(client, { id, label, date, colIndex }) {
 
   const { error } = await client
     .from('weeks')
-    .insert([{
+    .upsert([{
       id: id,
       col_index: colIndex || 1,
       label: label,
       week_date: formattedDate
-    }]);
+    }], { onConflict: 'id' });
 
   if (error) throw error;
   return { success: true };
@@ -488,8 +493,53 @@ export async function deleteTenantWeek(client, weekId) {
  */
 export async function updateTenantRowOrder(client, orderedIds = []) {
   if (!client || !orderedIds.length) return;
-  const updates = orderedIds.map((id, index) => (
+
+  // One request for the whole route (tenant update 005)
+  const { error: rpcError } = await client.rpc('finroute_set_row_order', { p_ids: orderedIds });
+  if (!rpcError) return;
+  const missing = rpcError.code === 'PGRST202' || rpcError.code === '42883' || /could not find the function|does not exist/i.test(rpcError.message || '');
+  if (!missing) throw rpcError;
+
+  // Older tenant databases: one request per customer
+  const results = await Promise.all(orderedIds.map((id, index) => (
     client.from('customers').update({ row_order: index + 1 }).eq('id', id)
-  ));
-  await Promise.allSettled(updates);
+  )));
+  const failed = results.find(r => r?.error);
+  if (failed) throw failed.error;
+}
+
+/**
+ * UPDATE ALL WEEK DATES (after Week 1 date changes)
+ */
+export async function updateTenantWeeks(client, weeks = []) {
+  if (!client) throw new Error('Tenant DB client not ready.');
+  if (!weeks.length) return { success: true };
+  const rows = weeks.map((w, idx) => {
+    let formattedDate = new Date().toISOString().split('T')[0];
+    if (w.date) {
+      const parts = String(w.date).split(/[-/]/);
+      if (parts.length === 3) {
+        formattedDate = parts[0].length === 4 ? `${parts[0]}-${parts[1]}-${parts[2]}` : `${parts[2]}-${parts[1]}-${parts[0]}`;
+      }
+    }
+    return {
+      id: w.id,
+      col_index: Number(w.col_index || w.colIndex || idx + 1),
+      label: w.label || `Week ${idx + 1}`,
+      week_date: formattedDate
+    };
+  });
+  const { error } = await client.from('weeks').upsert(rows, { onConflict: 'id' });
+  if (error) throw error;
+  return { success: true };
+}
+
+/**
+ * PERMANENTLY DELETE AN ARCHIVE RECORD
+ */
+export async function deleteTenantArchiveRecord(client, archiveId) {
+  if (!client) throw new Error('Tenant DB client not ready.');
+  const { error } = await client.from('loan_archive').delete().or(`id.eq.${archiveId},original_customer_id.eq.${archiveId}`);
+  if (error) throw error;
+  return { success: true };
 }

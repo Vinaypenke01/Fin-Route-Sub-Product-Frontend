@@ -18,6 +18,10 @@ import { withCors, jsonResponse, errorResponse } from '../_shared/cors.ts';
 import { getServiceClient } from '../_shared/auth.ts';
 // @ts-ignore: TS extension import in Deno
 import { getTenantDbAccess, getTenantAnonClient, syncTenantAuthUser } from '../_shared/tenant.ts';
+// @ts-ignore: TS extension import in Deno
+import { decideLogin, inUseMessage, isValidDeviceSessionId, cleanDeviceLabel } from '../_shared/session.ts';
+// @ts-ignore: TS extension import in Deno
+import { passwordProblem } from '../_shared/password.ts';
 
 serve(withCors(async (req: Request) => {
   if (req.method !== 'POST') {
@@ -49,6 +53,42 @@ serve(withCors(async (req: Request) => {
     }
 
     const tenantId = String(verify.tenant_id || '');
+
+    // 2. One active device per tenant (checked only after the password is
+    //    verified, so wrong passwords learn nothing about other devices).
+    const deviceSessionId = body?.deviceSessionId;
+    if (!isValidDeviceSessionId(deviceSessionId)) {
+      return jsonResponse({ success: false, message: 'Please refresh the page to update the app, then sign in again.' });
+    }
+    if (tenantId) {
+      const { data: activeRow, error: aErr } = await serviceClient
+        .from('master_active_sessions')
+        .select('session_id, device_label, last_seen_at')
+        .eq('tenant_id', tenantId)
+        .maybeSingle();
+      if (aErr) {
+        console.error('master_active_sessions read error:', aErr);
+        return errorResponse('Authentication service error.', 500);
+      }
+      const decision = decideLogin(activeRow, deviceSessionId);
+      if (!decision.allow) {
+        return jsonResponse({ success: false, code: 'IN_USE', message: inUseMessage(decision) });
+      }
+      const nowIso = new Date().toISOString();
+      const { error: uErr } = await serviceClient.from('master_active_sessions').upsert({
+        tenant_id: tenantId,
+        session_id: deviceSessionId,
+        device_label: cleanDeviceLabel(body?.deviceLabel),
+        ip_address: (req.headers.get('x-forwarded-for') || '').split(',')[0].trim().slice(0, 64) || null,
+        started_at: nowIso,
+        last_seen_at: nowIso,
+      }, { onConflict: 'tenant_id' });
+      if (uErr) {
+        console.error('master_active_sessions upsert error:', uErr);
+        return errorResponse('Authentication service error.', 500);
+      }
+    }
+
     const profile = {
       success: true,
       tenantId,
@@ -59,6 +99,9 @@ serve(withCors(async (req: Request) => {
       tenantAnonKey: verify.tenant_anon_key,
       tenantAuthRequired: Boolean(verify.tenant_auth_required),
       expiresAt: verify.expires_at,
+      // Old passwords that don't meet the current rule still log in, but the
+      // operator must choose a new one before using the app.
+      mustChangePassword: passwordProblem(password, email) !== null,
     };
 
     // 2. Tenant project sign-in

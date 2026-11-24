@@ -16,6 +16,7 @@ import {
 // Loaded straight from the repo so the guide always shows the real scripts.
 import tenantTemplateSql from '../../supabase/supabase_tenant_template.sql?raw';
 import tenantLockdownSql from '../../supabase/tenant_lockdown.sql?raw';
+import { TENANT_UPDATES, LATEST_TENANT_VERSION } from '../config/tenantUpdates';
 
 const SITE_URL = 'https://sub-project.fin-route.site';
 const MASTER_REF = 'ubhwoicsjmxslggltvaa';
@@ -212,9 +213,14 @@ const MASTER_MIGRATIONS = [
   'supabase/migrations/20261123_security_hardening.sql',
   'supabase/migrations/20261124_tenant_auth.sql',
   'supabase/migrations/20261125_tenant_delete.sql',
+  'supabase/migrations/20261126_active_sessions.sql',
+  'supabase/migrations/20261127_backups.sql',
+  'supabase/migrations/20261128_client_errors.sql',
 ];
 
-const DEPLOY_FUNCTIONS_CMD = `npx supabase functions deploy tenant-login admin-tenants keep-alive super-admin-login --project-ref ${MASTER_REF}`;
+const DEPLOY_FUNCTIONS_CMD = `npx supabase functions deploy tenant-login tenant-session tenant-backup report-error admin-tenants keep-alive super-admin-login --project-ref ${MASTER_REF}`;
+const BACKUP_SECRET_GEN_CMD = `$s = [guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N'); $s`;
+const BACKUP_SECRET_SET_CMD = `npx supabase secrets set --project-ref ${MASTER_REF} BACKUP_CRON_SECRET=PASTE_THE_VALUE_HERE`;
 const ALLOWED_ORIGINS_CMD = `npx supabase secrets set --project-ref ${MASTER_REF} "ALLOWED_ORIGINS=${SITE_URL},http://localhost:5173,https://*--sub-project001.netlify.app"`;
 
 function parseProjectRef(url) {
@@ -329,7 +335,7 @@ export default function TenantSetupGuide({ onOpenAddTenant }) {
       <Step number={1} title="Create the tenant's Supabase project" time="3 minutes" done={!!done.create} onToggle={() => toggle('create')}>
         <ol className="list-decimal pl-5 space-y-1.5">
           <li>Open <LinkOut href="https://supabase.com/dashboard/projects">Supabase dashboard</LinkOut> and click <Click>New project</Click>.</li>
-          <li><b>Name:</b> something clear, e.g. <code className="font-mono">finroute-sunday-kovuru</code>.</li>
+          <li><b>Name:</b> something clear, e.g. <code className="font-mono">finroute-business-name</code>.</li>
           <li><b>Database password:</b> click <Click>Generate a password</Click> and save it in a password manager. You won't need it for daily use.</li>
           <li><b>Region:</b> choose <b>South Asia (Mumbai)</b> for the fastest app.</li>
           <li>Click <Click>Create new project</Click> and wait about 2 minutes until it says the project is ready.</li>
@@ -367,6 +373,10 @@ export default function TenantSetupGuide({ onOpenAddTenant }) {
         <Callout type="ok">
           Good result: every policy is called <b>Operators full access …</b> for <b>{'{authenticated}'}</b>, and the
           second query returns <b>no rows</b>.
+        </Callout>
+        <Callout type="info">
+          Then run every script in <b>Tenant database updates</b> (further down this page), in order, in the same SQL Editor.
+          A brand-new tenant needs all of them.
         </Callout>
       </Step>
 
@@ -465,6 +475,28 @@ export default function TenantSetupGuide({ onOpenAddTenant }) {
       </Step>
 
       {/* Extra sections */}
+      <Section title={`Tenant database updates (latest: v${LATEST_TENANT_VERSION})`} defaultOpen>
+        <p>
+          Every tenant has its own database, so improvements to FinRoute sometimes need a small script run in
+          <b> each tenant&apos;s</b> SQL Editor. The Tenants Directory shows each tenant&apos;s version; any tenant marked
+          <b> update needed</b> should get the missing scripts below, <b>in order</b>.
+        </p>
+        <ol className="list-decimal pl-5 space-y-1">
+          <li>Open the tenant&apos;s project → <Click>SQL Editor</Click> → <Click>New query</Click> (check the project in the address bar).</li>
+          <li>Copy the next script it&apos;s missing, paste, <Click>Run</Click>. The last line shows the new version number.</li>
+          <li>Back in FinRoute, reload the Tenants Directory: the badge should say <b>up to date</b>.</li>
+        </ol>
+        {TENANT_UPDATES.map(u => (
+          <div key={u.version} className="space-y-2">
+            <p className="text-[12px]"><b>v{u.version}: {u.title}.</b> {u.summary}</p>
+            <CodeBlock code={u.sql} title={u.file} language="sql" collapsible />
+          </div>
+        ))}
+        <Callout type="info">
+          Scripts are safe to run twice, so if you&apos;re unsure whether one was applied, just run it again.
+        </Callout>
+      </Section>
+
       <Section title="Switching an existing (older) tenant to secure sign-in">
         <p>Older tenants were created before the lockdown. For each one, in this order:</p>
         <ol className="list-decimal pl-5 space-y-1.5">
@@ -474,6 +506,7 @@ export default function TenantSetupGuide({ onOpenAddTenant }) {
           <li>Run the <b>lockdown script</b> in their SQL Editor (step 3).</li>
           <li>Edit the tenant → tick <b>Require tenant sign-in</b> → Save.</li>
           <li>Do the <b>final check</b> (step 8).</li>
+          <li>Run any <b>Tenant database updates</b> it is missing.</li>
         </ol>
         <Callout type="warn">
           Do it in exactly this order. If you lock the database before the operator has logged in once with a secret key
@@ -496,6 +529,7 @@ export default function TenantSetupGuide({ onOpenAddTenant }) {
               <tr><td className="p-2">Step 8 still shows rows</td><td className="p-2">The lockdown ran in a different project. Open the tenant's SQL Editor (check the URL) and run step 3 again.</td></tr>
               <tr><td className="p-2">"Save the tenant secret key before requiring tenant sign-in"</td><td className="p-2">Paste the secret key in the same Edit form, then tick the box.</td></tr>
               <tr><td className="p-2">Tenant shows "sleeping" in health logs</td><td className="p-2">Open the tenant project in Supabase and click <b>Restore project</b>, then ping again.</td></tr>
+              <tr><td className="p-2">Operator sees "already open on another device"</td><td className="p-2">Only one device can use an account at a time. Log out on the other device, or wait 5 minutes after closing it. Lost phone: Tenants Directory → <b>End session</b>.</td></tr>
               <tr><td className="p-2">Operator forgot their password</td><td className="p-2">Edit Tenant → type a new password → Save. It updates both FinRoute and their tenant account.</td></tr>
             </tbody>
           </table>
@@ -517,6 +551,23 @@ export default function TenantSetupGuide({ onOpenAddTenant }) {
         </ul>
       </Section>
 
+      <Section title="Alerts: know about problems early">
+        <ul className="list-disc pl-5 space-y-1.5">
+          <li><b>Failed nightly backups or keep-alive</b> turn the GitHub Action red. Turn on emails: GitHub → your profile → <b>Settings</b> → <b>Notifications</b> → <b>Actions</b> → tick <b>Send notifications for failed workflows only</b>.</li>
+          <li><b>App errors</b> from operators' phones appear in <Click>Keep-Alive & Health Logs</Click> → <b>App errors from operators</b>. Check it weekly, or whenever an operator reports a problem.</li>
+          <li><b>Database size</b> shows next to each tenant's DB version (after tenant update 004). It turns amber at 70% and red at 90% of the free-tier 500 MB.</li>
+        </ul>
+      </Section>
+
+      <Section title="Upgrading a tenant to a paid Supabase plan">
+        <p>Upgrade when the size badge turns amber, when a tenant can't tolerate the free tier pausing, or when you want Supabase's own daily backups as a second layer.</p>
+        <ol className="list-decimal pl-5 space-y-1.5">
+          <li>Supabase dashboard → the tenant's <b>organization</b> → <b>Billing</b> → choose the <b>Pro</b> plan. The project, URL and keys stay the same, so nothing changes in FinRoute.</li>
+          <li>After upgrading, the database limit is much larger; the size badge still uses 500 MB as its warning line, so treat amber/red as informational for paid tenants.</li>
+          <li>Paid projects don't pause, but keep-alive still pings them harmlessly.</li>
+        </ol>
+      </Section>
+
       <Section title="One-time platform setup (already done; for reference)">
         <p>Run once in the <b>master</b> project's SQL Editor (<LinkOut href={`https://supabase.com/dashboard/project/${MASTER_REF}/sql/new`}>open</LinkOut>), in this order:</p>
         <ol className="list-decimal pl-5 space-y-1 font-mono text-[11.5px]">
@@ -524,6 +575,10 @@ export default function TenantSetupGuide({ onOpenAddTenant }) {
         </ol>
         <p>Allowed websites for the server functions (run in PowerShell from the project folder):</p>
         <CodeBlock code={ALLOWED_ORIGINS_CMD} title="Set ALLOWED_ORIGINS" language="powershell" />
+        <p>Nightly backups: create one long random value, store it in Supabase <b>and</b> as the GitHub repository secret <code className="font-mono">BACKUP_CRON_SECRET</code> (GitHub → Settings → Secrets and variables → Actions):</p>
+        <CodeBlock code={BACKUP_SECRET_GEN_CMD} title="1. Generate a random value (PowerShell)" language="powershell" />
+        <CodeBlock code={BACKUP_SECRET_SET_CMD} title="2. Save it in Supabase" language="powershell" />
+        <p>Restoring a backup: see <code className="font-mono">docs/RESTORE_BACKUP.md</code> (dry run first, then <code className="font-mono">--apply</code>).</p>
         <p>Deploy the server functions after any change to them:</p>
         <CodeBlock code={DEPLOY_FUNCTIONS_CMD} title="Deploy Edge Functions" language="powershell" />
         <Callout type="info">

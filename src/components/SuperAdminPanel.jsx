@@ -49,6 +49,7 @@ import {
   updateTenantFullDetails,
   fetchTenantAuditLogs,
   fetchTenantStats,
+  fetchTenantVersions,
   fetchSuperAdmins,
   createSuperAdmin,
   deleteSuperAdmin,
@@ -58,6 +59,10 @@ import {
 } from '../services/masterAuthService';
 import SuperAdminModals from './SuperAdminModals';
 import DeleteTenantModal from './DeleteTenantModal';
+import TenantVersionBadge from './TenantVersionBadge';
+import { passwordProblem } from '../../supabase/functions/_shared/password.ts';
+import ActiveSessionInfo from './ActiveSessionInfo';
+import ClientErrorsPanel from './ClientErrorsPanel';
 
 // Loaded only when the admin opens the Setup Guide tab
 const TenantSetupGuide = lazy(() => import('./TenantSetupGuide'));
@@ -76,6 +81,7 @@ export default function SuperAdminPanel({ onBackToApp }) {
 
   // Tenants Management
   const [tenants, setTenants] = useState([]);
+  const [tenantVersions, setTenantVersions] = useState({});
   const [isFetchingTenants, setIsFetchingTenants] = useState(false);
   const [isPingingAll, setIsPingingAll] = useState(false);
   const [pingReport, setPingReport] = useState(null);
@@ -197,6 +203,8 @@ export default function SuperAdminPanel({ onBackToApp }) {
       setTenants(res.data);
     }
     setIsFetchingTenants(false);
+    // Database versions are checked server-side per tenant; load them after the list
+    fetchTenantVersions().then(setTenantVersions).catch(() => {});
   };
 
   const loadHealthLogs = async () => {
@@ -250,9 +258,14 @@ export default function SuperAdminPanel({ onBackToApp }) {
 
   const handleCreateAdmin = async (e) => {
     e.preventDefault();
-    setIsCreatingAdmin(true);
     setAddAdminError(null);
     setAddAdminSuccess(null);
+    const adminPwProblem = passwordProblem(String(newAdminForm.password || '').trim(), newAdminForm.email);
+    if (adminPwProblem) {
+      setAddAdminError(`Password: ${adminPwProblem}`);
+      return;
+    }
+    setIsCreatingAdmin(true);
 
     const res = await createSuperAdmin(newAdminForm);
     if (res.success) {
@@ -346,6 +359,11 @@ export default function SuperAdminPanel({ onBackToApp }) {
 
   const handleCreateTenant = async (e) => {
     e.preventDefault();
+    const tenantPwProblem = passwordProblem(String(newPassword || '').trim(), newEmail);
+    if (tenantPwProblem) {
+      setCreateError(`Password: ${tenantPwProblem}`);
+      return;
+    }
     setIsCreating(true);
     setCreateError(null);
 
@@ -456,6 +474,13 @@ export default function SuperAdminPanel({ onBackToApp }) {
   // Save Tenant Full Edits
   const handleSaveEditTenant = async (e) => {
     e.preventDefault();
+    if (editForm.password && editForm.password.trim()) {
+      const editPwProblem = passwordProblem(editForm.password.trim(), editForm.email);
+      if (editPwProblem) {
+        setEditError(`New password: ${editPwProblem}`);
+        return;
+      }
+    }
     setIsSavingEdit(true);
     setEditError(null);
     setEditSuccessMsg(null);
@@ -1068,6 +1093,10 @@ export default function SuperAdminPanel({ onBackToApp }) {
                                   </span>
                                 )}
                               </div>
+                              <div>
+                                <TenantVersionBadge info={tenantVersions[t.id]} onOpenGuide={() => setActiveAdminTab('guide')} />
+                              </div>
+                              <ActiveSessionInfo tenant={t} onEnded={loadTenants} />
                             </div>
                           ) : (
                             <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
@@ -1156,16 +1185,19 @@ export default function SuperAdminPanel({ onBackToApp }) {
       </Suspense>
     ) : activeAdminTab === 'logs' ? (
       /* Keep-Alive & Database Health Logs Section */
-      <SuperAdminHealthLogs
-        healthLogs={healthLogs}
-        isLoadingHealthLogs={isLoadingHealthLogs}
-        loadHealthLogs={loadHealthLogs}
-        handleClearHealthLogs={handleClearHealthLogs}
-        handlePingAllDatabases={handlePingAllDatabases}
-        isPingingAll={isPingingAll}
-        pingReport={pingReport}
-        tenantsCount={tenants.length}
-      />
+      <>
+        <SuperAdminHealthLogs
+          healthLogs={healthLogs}
+          isLoadingHealthLogs={isLoadingHealthLogs}
+          loadHealthLogs={loadHealthLogs}
+          handleClearHealthLogs={handleClearHealthLogs}
+          handlePingAllDatabases={handlePingAllDatabases}
+          isPingingAll={isPingingAll}
+          pingReport={pingReport}
+          tenantsCount={tenants.length}
+        />
+        <ClientErrorsPanel />
+      </>
     ) : (
       /* Admin Configuration Section */
       <div className="space-y-6">

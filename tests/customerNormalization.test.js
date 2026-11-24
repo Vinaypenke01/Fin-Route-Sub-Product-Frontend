@@ -38,6 +38,29 @@ describe('normalizeCustomers', () => {
     expect(c.payments).toEqual({});
   });
 
+  it('hides an empty ghost row that duplicates a real customer', () => {
+    const out = normalizeCustomers([
+      { id: 'CUST-9', name: 'Ravi  Kumar', phone: '9000000000', disbursed: 1000 },
+      { id: 'CUST-', name: 'ravi kumar', phone: '', disbursed: 0, payments: {} },
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0].id).toBe('CUST-9');
+  });
+
+  it('keeps a same-name row that has its own data (a different customer)', () => {
+    const out = normalizeCustomers([
+      { id: 'CUST-9', name: 'Ravi Kumar', phone: '9000000000', disbursed: 1000 },
+      { id: '', name: 'Ravi Kumar', phone: '', disbursed: 500 },
+      { id: '', name: 'Ravi Kumar', phone: '', payments: { w1: 100 } },
+    ]);
+    expect(out).toHaveLength(3);
+  });
+
+  it('keeps an empty row when no real customer has that name', () => {
+    const out = normalizeCustomers([{ id: '', name: 'New Person', phone: '' }]);
+    expect(out).toHaveLength(1);
+  });
+
   it('normalises issue dates to DD/MM/YYYY', () => {
     const [c] = normalizeCustomers([{ id: 'CUST-1', name: 'A', disbursedDate: '2026-10-25' }]);
     expect(c.disbursedDate).toBe('25/10/2026');

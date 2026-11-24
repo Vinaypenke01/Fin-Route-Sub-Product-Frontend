@@ -1,0 +1,41 @@
+name: Nightly tenant backups
+
+on:
+  schedule:
+    # 21:30 UTC = 03:00 IST, after the day's collections
+    - cron: '30 21 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    name: Back up every tenant database
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Run tenant-backup
+        # Requires repo secrets:
+        #   SUPABASE_MASTER_PUBLISHABLE_KEY  (same as keep-alive)
+        #   BACKUP_CRON_SECRET               (same value as the Supabase function secret)
+        env:
+          SUPABASE_KEY: ${{ secrets.SUPABASE_MASTER_PUBLISHABLE_KEY }}
+          BACKUP_SECRET: ${{ secrets.BACKUP_CRON_SECRET }}
+        run: |
+          if [ -z "$SUPABASE_KEY" ] || [ -z "$BACKUP_SECRET" ]; then
+            echo "Missing SUPABASE_MASTER_PUBLISHABLE_KEY or BACKUP_CRON_SECRET repository secret"; exit 1
+          fi
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            "https://ubhwoicsjmxslggltvaa.supabase.co/functions/v1/tenant-backup" \
+            -H "apikey: $SUPABASE_KEY" \
+            -H "x-backup-secret: $BACKUP_SECRET" \
+            -H "Content-Type: application/json" \
+            -d '{}')
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n 1)
+          # Print only the summary message (no tenant details in CI logs)
+          echo "$RESPONSE" | sed '$d' | grep -o '"message":"[^"]*"' || true
+          echo "HTTP $HTTP_CODE"
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "Backup run failed: check Admin panel → Backups and the tenant-backup function logs."; exit 1
+          fi

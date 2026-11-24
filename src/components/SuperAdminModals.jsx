@@ -1,4 +1,5 @@
 import React from 'react';
+import TenantBackupsPanel from './TenantBackupsPanel';
 import {
   Building,
   Pencil,
@@ -256,6 +257,9 @@ export default function SuperAdminModals({
                       })()}
                     </div>
                   </div>
+
+                  {/* Backups (nightly + manual) */}
+                  <TenantBackupsPanel key={viewingTenant.id} tenant={viewingTenant} />
 
                   {/* Real-time DB Health & Statistics */}
                   <div>
@@ -533,6 +537,8 @@ export default function SuperAdminModals({
                                         {log.details.week && <span className="mr-2">Week: {log.details.week}</span>}
                                         {log.details.reason && <span>Reason: {log.details.reason}</span>}
                                         {log.details.disbursed && <span>Principal: {log.details.disbursed}</span>}
+                                        {log.details.summary && <span className="text-slate-700">{log.details.summary}</span>}
+                                        {log.details.by && <span className="text-slate-400">by {log.details.by}</span>}
                                       </>
                                     )}
                                   </div>
@@ -812,7 +818,7 @@ export default function SuperAdminModals({
                 <label className="block text-slate-700 font-semibold mb-1">Client / Operator Name *</label>
                 <input
                   type="text"
-                  placeholder="e.g. Sunday Kovuru"
+                  placeholder="e.g. Sri Lakshmi Finance"
                   value={newClientName}
                   onChange={(e) => setNewClientName(e.target.value)}
                   required
@@ -847,7 +853,7 @@ export default function SuperAdminModals({
                   <label className="block text-slate-700 font-semibold mb-1">Initial Password *</label>
                   <input
                     type="text"
-                    placeholder="SecretPass@123"
+                    placeholder="At least 10 characters"
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                     required

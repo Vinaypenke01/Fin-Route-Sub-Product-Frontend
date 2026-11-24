@@ -1,20 +1,31 @@
 import { parseDate, formatDateDMY } from './formatters';
 
+const hasRealId = (c) => Boolean(c?.id) && c.id !== 'CUST-';
+const normName = (name) => String(name || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+/**
+ * An "empty ghost" row carries no information of its own: no ID, no phone,
+ * no loan amount and no payments. Such rows appear from old imports.
+ */
+function isEmptyGhost(c) {
+  if (!c || c.isVillageDivider || c.is_village_divider) return false;
+  const anyPayment = Object.values(c.payments || {}).some(v => Number(v) > 0);
+  return !hasRealId(c) && !c.phone && !(Number(c.disbursed) > 0) && !anyPayment;
+}
+
 /**
  * Normalizer to guarantee every single customer row has a unique ID, isolated _rowId,
- * and filters phantom duplicates (e.g. ghost Kola Srinu entries with empty phone/ID).
+ * and hides phantom duplicates: an empty ghost row whose name matches a real
+ * customer (one with an ID and a phone number). Distinct customers who share a
+ * name are never hidden, because they carry their own data.
  */
 export function normalizeCustomers(list) {
   if (!Array.isArray(list)) return [];
 
-  // Identify real customers with phone numbers or distinct IDs
-  const realKola = list.find(c => (c.name || '').includes('కోలా శ్రీను') && c.id && c.id !== 'CUST-' && c.phone);
-
-  // Filter out any ghost/phantom duplicates of "కోలా శ్రీను" that have empty ID/phone
-  const deduplicated = list.filter(c => {
-    const isPhantomKola = realKola && (c.name || '').includes('కోలా శ్రీను') && (!c.phone || c.id === 'CUST-') && c !== realKola;
-    return !isPhantomKola;
-  });
+  const realNames = new Set(
+    list.filter(c => hasRealId(c) && c.phone && c.name).map(c => normName(c.name))
+  );
+  const deduplicated = list.filter(c => !(isEmptyGhost(c) && c.name && realNames.has(normName(c.name))));
 
   const seenIds = new Set();
   let currentVillage = '';

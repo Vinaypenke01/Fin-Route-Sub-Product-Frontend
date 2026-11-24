@@ -12,6 +12,8 @@ import { withCors, handleCors, jsonResponse, errorResponse } from '../_shared/co
 import { verifySuperAdmin } from '../_shared/auth.ts';
 // @ts-ignore: TS extension import in Deno
 import { getTenantDbAccess, getTenantDataClient, syncTenantAuthUser, pingTenantDatabase } from '../_shared/tenant.ts';
+// @ts-ignore: TS extension import in Deno
+import { passwordProblem } from '../_shared/password.ts';
 
 declare const Deno: any;
 
@@ -121,6 +123,11 @@ serve(withCors(async (req: Request) => {
             master_credentials (
               last_login,
               expires_at
+            ),
+            master_active_sessions (
+              device_label,
+              started_at,
+              last_seen_at
             )
           `)
           .order('created_at', { ascending: false });
@@ -158,6 +165,10 @@ serve(withCors(async (req: Request) => {
 
         if (!email || !clientName || !password) {
           return errorResponse('Email, client name, and password are required.', 400);
+        }
+        const newTenantPwProblem = passwordProblem(password, email);
+        if (newTenantPwProblem) {
+          return errorResponse(`Password: ${newTenantPwProblem}`, 400);
         }
 
         // 1. Insert Tenant
@@ -256,6 +267,13 @@ serve(withCors(async (req: Request) => {
           return errorResponse('tenantId is required.', 400);
         }
 
+        if (password && String(password).trim()) {
+          const updPwProblem = passwordProblem(String(password).trim(), String(email || ''));
+          if (updPwProblem) {
+            return errorResponse(`Password: ${updPwProblem}`, 400);
+          }
+        }
+
         if (tenantAuthRequired === true && !String(tenantSecretKey || '').trim()) {
           const existing = await getTenantDbAccess(serviceClient, tenantId).catch(() => null);
           if (!existing?.secretKey) {
@@ -332,6 +350,122 @@ serve(withCors(async (req: Request) => {
         });
 
         return jsonResponse({ success: true, message: 'Tenant updated successfully.', warnings });
+      }
+
+      // ------------------------------------------------------------------------
+      // 4a. TENANT DATABASE VERSIONS (which tenant updates have been applied)
+      // ------------------------------------------------------------------------
+      case 'tenant_versions': {
+        const { data: rows, error: rErr } = await serviceClient.from('master_tenants').select('id');
+        if (rErr) throw rErr;
+
+        const entries = await Promise.all((rows || []).map(async (r: { id: string }) => {
+          try {
+            const access = await getTenantDbAccess(serviceClient, r.id);
+            if (!access) return [r.id, { status: 'unconfigured', version: null }];
+            if (!access.secretKey) return [r.id, { status: 'no_key', version: null }];
+
+            const client = getTenantDataClient(access);
+            const res: any = await Promise.race([
+              client.from('finroute_schema_version').select('version').order('version', { ascending: false }).limit(1),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), 6000)),
+            ]);
+            if (res?.error) {
+              const missing = res.error.code === '42P01' || res.error.code === 'PGRST205' || /does not exist|could not find/i.test(res.error.message || '');
+              return [r.id, missing ? { status: 'ok', version: 0 } : { status: 'error', version: null, message: res.error.message }];
+            }
+            const version = Number(res?.data?.[0]?.version) || 0;
+            let sizeBytes: number | null = null;
+            if (version >= 4) {
+              const { data: size } = await client.rpc('finroute_database_size');
+              sizeBytes = size === null || size === undefined ? null : Number(size);
+            }
+            return [r.id, { status: 'ok', version, sizeBytes }];
+          } catch (e) {
+            return [r.id, { status: 'error', version: null, message: String((e as Error)?.message || e) }];
+          }
+        }));
+
+        return jsonResponse({ success: true, versions: Object.fromEntries(entries) });
+      }
+
+      // ------------------------------------------------------------------------
+      // 4a2. END AN OPERATOR'S ACTIVE SESSION (lost / stolen phone)
+      // ------------------------------------------------------------------------
+      case 'end_session': {
+        const tenantId = String(payload.tenantId || '').trim();
+        if (!tenantId) return errorResponse('tenantId is required.', 400);
+
+        // 1. Free the account: the device's next heartbeat (within a minute) signs it out
+        const { error: dErr } = await serviceClient.from('master_active_sessions').delete().eq('tenant_id', tenantId);
+        if (dErr) throw dErr;
+
+        // 2. Also revoke the tenant database sign-in right away (tenant update 002)
+        const warnings: string[] = [];
+        try {
+          const access = await getTenantDbAccess(serviceClient, tenantId);
+          if (access?.secretKey && access.authUserId) {
+            const { error: rErr } = await getTenantDataClient(access).rpc('finroute_revoke_user_sessions', { p_user_id: access.authUserId });
+            if (rErr) {
+              warnings.push(/could not find|does not exist|PGRST202/i.test(rErr.message || '')
+                ? 'Run tenant update 002 on this tenant so "End session" also signs the device out of the database immediately.'
+                : `Database sign-in not revoked: ${rErr.message}`);
+            }
+          }
+        } catch (e) {
+          warnings.push(`Database sign-in not revoked: ${(e as Error)?.message || e}`);
+        }
+
+        console.log(`Session ended by ${callerUser.email} for tenant ${tenantId}`);
+        return jsonResponse({ success: true, message: 'Session ended. The device will be signed out within a minute.', warnings });
+      }
+
+      // ------------------------------------------------------------------------
+      // 4a3. BACKUPS: list runs and create short-lived download links
+      // ------------------------------------------------------------------------
+      case 'list_backups': {
+        const tenantId = String(payload.tenantId || '').trim();
+        if (!tenantId) return errorResponse('tenantId is required.', 400);
+        const { data, error } = await serviceClient
+          .from('master_backup_runs')
+          .select('id, status, file_path, size_bytes, row_counts, error, trigger, created_at')
+          .eq('tenant_id', tenantId)
+          .order('created_at', { ascending: false })
+          .limit(60);
+        if (error) throw error;
+
+        // Mark which files still exist (older ones are removed by retention)
+        const { data: files } = await serviceClient.storage.from('tenant-backups').list(tenantId, { limit: 1000 });
+        const existing = new Set((files || []).map((f: { name: string }) => `${tenantId}/${f.name}`));
+        const runs = (data || []).map((r: any) => ({ ...r, available: Boolean(r.file_path && existing.has(r.file_path)) }));
+        return jsonResponse({ success: true, runs });
+      }
+
+      case 'backup_download_url': {
+        const tenantId = String(payload.tenantId || '').trim();
+        const path = String(payload.path || '').trim();
+        // Only files inside this tenant's own folder, no path tricks
+        if (!tenantId || !path.startsWith(`${tenantId}/`) || path.includes('..')) {
+          return errorResponse('Invalid backup file.', 400);
+        }
+        const { data, error } = await serviceClient.storage.from('tenant-backups').createSignedUrl(path, 300, { download: true });
+        if (error) throw error;
+        console.log(`Backup download link created by ${callerUser.email}: ${path}`);
+        return jsonResponse({ success: true, url: data?.signedUrl });
+      }
+
+      // ------------------------------------------------------------------------
+      // 4a4. APP ERROR REPORTS (already scrubbed of personal data)
+      // ------------------------------------------------------------------------
+      case 'list_client_errors': {
+        const limit = Math.min(Number(payload?.limit) || 100, 500);
+        const { data, error } = await serviceClient
+          .from('master_client_errors')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(limit);
+        if (error) throw error;
+        return jsonResponse({ success: true, errors: data || [] });
       }
 
       // ------------------------------------------------------------------------
@@ -471,6 +605,10 @@ serve(withCors(async (req: Request) => {
 
         if (!email || !password || !name) {
           return errorResponse('Full name, email address, and initial password are required.', 400);
+        }
+        const adminPwProblem = passwordProblem(password, email);
+        if (adminPwProblem) {
+          return errorResponse(`Password: ${adminPwProblem}`, 400);
         }
 
         // 1. Create user in Supabase Auth with auto-confirmed email
@@ -663,6 +801,30 @@ serve(withCors(async (req: Request) => {
         ]);
 
         const combined: Array<Record<string, unknown>> = [];
+
+        // Change history (tenant update 003); ignored if the table doesn't exist yet
+        const { data: changeRows } = await tenantClient
+          .from('change_log')
+          .select('*')
+          .order('changed_at', { ascending: false })
+          .limit(100);
+        const fmt = (v: unknown) => (v === null || v === undefined || v === '' ? '–' : typeof v === 'object' ? '(details)' : String(v));
+        (changeRows || []).forEach((c: any) => {
+          const fields = Object.keys(c.new_values || c.old_values || {});
+          const summary = c.action === 'update'
+            ? fields.map((k: string) => k + ': ' + fmt(c.old_values?.[k]) + ' → ' + fmt(c.new_values?.[k])).join('; ')
+            : c.table_name === 'payments'
+              ? 'amount: ' + fmt((c.new_values || c.old_values)?.amount)
+              : '';
+          combined.push({
+            id: 'chg-' + c.id,
+            action: String(c.table_name).toUpperCase() + '_' + String(c.action).toUpperCase(),
+            entity_type: 'Change history',
+            entity_id: c.record_id,
+            details: { summary, by: c.changed_by_email || 'unknown' },
+            created_at: c.changed_at,
+          });
+        });
 
         if (Array.isArray(directLogs)) {
           directLogs.forEach(l => combined.push(l));

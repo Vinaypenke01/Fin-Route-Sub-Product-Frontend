@@ -1,17 +1,29 @@
 import { createClient } from '@supabase/supabase-js';
+import { getDeviceSessionId, getDeviceLabel } from './deviceSession';
 
 const masterUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_MASTER_SUPABASE_URL) || '';
 const masterAnonKey = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_MASTER_SUPABASE_ANON_KEY) || '';
 
+export const isMasterConfigured = Boolean(masterUrl && masterAnonKey);
+
+// When the build is missing its settings, every call fails with a clear
+// message (shown to the user) instead of crashing the whole screen on load.
+function notConfiguredClient() {
+  const fail = () => { throw new Error('Sign-in service is not configured. Please contact support.'); };
+  return new Proxy({}, { get: () => new Proxy(fail, { get: fail, apply: fail }) });
+}
+
 // Master client configured with persistent auth session for Super-Admin
-export const masterSupabase = createClient(masterUrl, masterAnonKey, {
-  auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-    storageKey: 'FINROUTE_SUPERADMIN_SUPABASE_AUTH',
-    detectSessionInUrl: true,
-  },
-});
+export const masterSupabase = isMasterConfigured
+  ? createClient(masterUrl, masterAnonKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        storageKey: 'FINROUTE_SUPERADMIN_SUPABASE_AUTH',
+        detectSessionInUrl: true,
+      },
+    })
+  : notConfiguredClient();
 
 /**
  * Helper to invoke authenticated Admin Edge Functions.
@@ -49,7 +61,12 @@ export async function authenticateTenant(email, password) {
     // 1. Preferred: tenant-login Edge Function (verifies in master, returns a
     //    tenant Auth session so the tenant DB can require signed-in operators).
     const { data, error } = await masterSupabase.functions.invoke('tenant-login', {
-      body: { email: cleanEmail, password: cleanPassword },
+      body: {
+        email: cleanEmail,
+        password: cleanPassword,
+        deviceSessionId: getDeviceSessionId(),
+        deviceLabel: getDeviceLabel(),
+      },
     });
 
     if (!error && data) {
@@ -65,6 +82,8 @@ export async function authenticateTenant(email, password) {
         tenantAnonKey: data.tenantAnonKey,
         tenantAuthRequired: Boolean(data.tenantAuthRequired),
         tenantSession: data.session || null,
+        deviceSessionManaged: true,
+        mustChangePassword: Boolean(data.mustChangePassword),
         expiresAt: data.expiresAt ? new Date(data.expiresAt).getTime() : null,
       };
     }
@@ -436,6 +455,108 @@ export async function updateTenantFullDetails({
  * Super-Admin: Update a tenant's database URL and Anon Key in master DB.
  * Routes through the authenticated 'admin-tenants' Edge Function.
  */
+/**
+ * Super-Admin: which tenant database update each tenant has applied.
+ * Returns { [tenantId]: { status: 'ok'|'no_key'|'unconfigured'|'error', version, message? } }
+ */
+export async function fetchTenantVersions() {
+  try {
+    const res = await invokeAdminEdgeFunction('admin-tenants', 'tenant_versions');
+    return res?.success ? (res.versions || {}) : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Super-Admin: end the operator's active session (lost or stolen phone).
+ */
+export async function endTenantSession(tenantId) {
+  try {
+    const res = await invokeAdminEdgeFunction('admin-tenants', 'end_session', { tenantId });
+    if (res?.success) return { success: true, message: res.message, warning: warningsMessage(res) };
+    return { success: false, message: res?.message || 'Failed to end session.' };
+  } catch (err) {
+    return { success: false, message: await edgeErrorMessage(err, 'Failed to end session.') };
+  }
+}
+
+/** Super-Admin: recent app error reports from operators' devices. */
+export async function listClientErrors(limit = 100) {
+  try {
+    const res = await invokeAdminEdgeFunction('admin-tenants', 'list_client_errors', { limit });
+    return res?.success ? { success: true, errors: res.errors || [] } : { success: false, message: res?.message, errors: [] };
+  } catch (err) {
+    return { success: false, message: await edgeErrorMessage(err, 'Could not load error reports.'), errors: [] };
+  }
+}
+
+/** Super-Admin: backup runs for one tenant (newest first). */
+export async function listTenantBackups(tenantId) {
+  try {
+    const res = await invokeAdminEdgeFunction('admin-tenants', 'list_backups', { tenantId });
+    return res?.success ? { success: true, runs: res.runs || [] } : { success: false, message: res?.message, runs: [] };
+  } catch (err) {
+    return { success: false, message: await edgeErrorMessage(err, 'Could not load backups.'), runs: [] };
+  }
+}
+
+/** Super-Admin: a 5-minute download link for one backup file. */
+export async function getBackupDownloadUrl(tenantId, path) {
+  try {
+    const res = await invokeAdminEdgeFunction('admin-tenants', 'backup_download_url', { tenantId, path });
+    return res?.success ? { success: true, url: res.url } : { success: false, message: res?.message };
+  } catch (err) {
+    return { success: false, message: await edgeErrorMessage(err, 'Could not create a download link.') };
+  }
+}
+
+/** Super-Admin: back up one tenant right now. */
+export async function runTenantBackup(tenantId) {
+  try {
+    const { data: { session } } = await masterSupabase.auth.getSession();
+    const { data, error } = await masterSupabase.functions.invoke('tenant-backup', {
+      body: { tenantId },
+      headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+    });
+    if (error) return { success: false, message: await edgeErrorMessage(error, 'Backup failed.') };
+    const r = (data?.results || [])[0];
+    if (r?.status === 'success') return { success: true, message: 'Backup saved.' };
+    return { success: false, message: r?.error || data?.message || 'Backup failed.' };
+  } catch (err) {
+    return { success: false, message: err?.message || 'Backup failed.' };
+  }
+}
+
+/** Operator: change own password (needs the current one). */
+export async function changeTenantPassword(email, currentPassword, newPassword) {
+  try {
+    const { data, error } = await masterSupabase.functions.invoke('tenant-session', {
+      body: { action: 'change_password', email, deviceSessionId: getDeviceSessionId(), currentPassword, newPassword },
+    });
+    if (error) return { success: false, message: await edgeErrorMessage(error, 'Could not change the password.') };
+    return { success: Boolean(data?.success), message: data?.message };
+  } catch (err) {
+    return { success: false, message: err?.message || 'Could not change the password. Check your internet connection.' };
+  }
+}
+
+/**
+ * Operator: keep this device's session alive / release it on logout.
+ * Returns { active: boolean | null } (null = couldn't reach the server).
+ */
+export async function tenantSessionPing(action, email, deviceSessionId) {
+  try {
+    const { data, error } = await masterSupabase.functions.invoke('tenant-session', {
+      body: { action, email, deviceSessionId },
+    });
+    if (error || !data) return { active: null };
+    return { active: data.active === undefined ? null : Boolean(data.active), reason: data.reason || null };
+  } catch {
+    return { active: null };
+  }
+}
+
 /**
  * Super-Admin: Permanently delete a tenant from the master registry.
  * The server also removes the operator's sign-in account in the tenant
