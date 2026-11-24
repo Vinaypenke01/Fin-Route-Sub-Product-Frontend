@@ -49,10 +49,21 @@ export default function ChangeHistoryModal({ isOpen, onClose, tenantClient, cust
       .filter(d => !q || `${d.title} ${d.subject} ${d.who} ${d.changes.map(c => `${c.label} ${c.from} ${c.to}`).join(' ')}`.toLowerCase().includes(q));
   }, [rows, lookup, query]);
 
+  // Escape closes the window
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Change history"
       className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >

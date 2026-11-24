@@ -9,6 +9,10 @@ const EMAIL = process.env.E2E_TENANT_EMAIL;
 const PASSWORD = process.env.E2E_TENANT_PASSWORD;
 
 test.skip(!EMAIL || !PASSWORD, 'Set E2E_TENANT_EMAIL and E2E_TENANT_PASSWORD (test tenant only) to run signed-in tests');
+// The live databases can be slow to wake up; these flows need more than 60 s.
+test.setTimeout(180_000);
+// One run at a time: a failed attempt must not race the retry for the device slot.
+test.describe.configure({ retries: 0 });
 
 const saveStatus = page => page.getByTestId('save-status');
 
@@ -27,13 +31,17 @@ async function login(page) {
 
 /** Log out (if signed in) and wait until the server has freed the device slot. */
 async function logout(page) {
+  if (page.isClosed()) return;
+  // Close any open window first (History, dialogs) so nothing covers the button
+  await page.keyboard.press('Escape').catch(() => {});
   const button = page.getByRole('button', { name: /log ?out|sign ?out/i }).first();
   if (!(await button.isVisible().catch(() => false))) return;
   const released = page.waitForResponse(
     r => r.url().includes('/functions/v1/tenant-session') && r.request().method() === 'POST',
     { timeout: 15_000 },
   ).catch(() => null);
-  await button.click();
+  // dispatchEvent cannot be blocked by an overlay, so cleanup never hangs
+  await button.dispatchEvent('click');
   const confirm = page.getByRole('button', { name: /confirm|yes|log out anyway/i });
   if (await confirm.isVisible().catch(() => false)) await confirm.click();
   await released;
@@ -65,9 +73,10 @@ test('sign in, save a payment, reload, it is still there', async ({ page }) => {
 
     // The change appears in History
     await page.getByRole('button', { name: /History/i }).click();
-    await expect(page.getByText(/Payment (changed|added)/i).first()).toBeVisible();
-    await page.keyboard.press('Escape');
-    await page.getByRole('button', { name: 'Close' }).first().click({ timeout: 2_000 }).catch(() => {});
+    await expect(page.getByText(/Payment (changed|added)/i).first()).toBeVisible({ timeout: 30_000 });
+    const history = page.getByRole('dialog', { name: /Change history/i });
+    await history.getByRole('button', { name: 'Close' }).click();
+    await expect(history).toHaveCount(0);
   } finally {
     await logout(page);
   }
