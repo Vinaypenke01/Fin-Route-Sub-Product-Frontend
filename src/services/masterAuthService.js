@@ -4,15 +4,26 @@ import { getDeviceSessionId, getDeviceLabel } from './deviceSession';
 const masterUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_MASTER_SUPABASE_URL) || '';
 const masterAnonKey = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_MASTER_SUPABASE_ANON_KEY) || '';
 
+export const isMasterConfigured = Boolean(masterUrl && masterAnonKey);
+
+// When the build is missing its settings, every call fails with a clear
+// message (shown to the user) instead of crashing the whole screen on load.
+function notConfiguredClient() {
+  const fail = () => { throw new Error('Sign-in service is not configured. Please contact support.'); };
+  return new Proxy({}, { get: () => new Proxy(fail, { get: fail, apply: fail }) });
+}
+
 // Master client configured with persistent auth session for Super-Admin
-export const masterSupabase = createClient(masterUrl, masterAnonKey, {
-  auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-    storageKey: 'FINROUTE_SUPERADMIN_SUPABASE_AUTH',
-    detectSessionInUrl: true,
-  },
-});
+export const masterSupabase = isMasterConfigured
+  ? createClient(masterUrl, masterAnonKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        storageKey: 'FINROUTE_SUPERADMIN_SUPABASE_AUTH',
+        detectSessionInUrl: true,
+      },
+    })
+  : notConfiguredClient();
 
 /**
  * Helper to invoke authenticated Admin Edge Functions.

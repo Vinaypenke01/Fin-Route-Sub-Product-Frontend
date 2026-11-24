@@ -3,14 +3,11 @@ import Header from './components/Header';
 import Footer from './components/Footer';
 import KpiDeck from './components/KpiDeck';
 import Toolbar from './components/Toolbar';
-import TrackerTable from './components/TrackerTable';
-import AppModals from './components/AppModals';
 import ToastContainer from './components/Toast';
 import LoadingScreen, { TableSkeleton } from './components/LoadingScreen';
 import ErrorBoundary from './components/ErrorBoundary';
 import { getCustomerTotalPaid, getCustomerBalance, getCustomerStatus, parseDate, recalculateWeeksFromWeekOne } from './utils/formatters';
 import { normalizeCustomers, getCustomerVillageName } from './utils/customerNormalization';
-import { generatePdfReport } from './utils/generatePdfReport';
 import { useTrackerSync } from './hooks/useTrackerSync';
 import { exportTrackerToCSV } from './utils/exportCSV';
 import { getSavedLanguage, setSavedLanguage } from './utils/translations';
@@ -18,10 +15,14 @@ import { getTenantClient } from './services/tenantDatabaseService';
 import { useOutbox } from './hooks/useOutbox';
 import SyncStatusBar from './components/SyncStatusBar';
 import { reportError } from './services/errorReporter';
+import { getDeviceSessionId } from './services/deviceSession';
 
 // Lazy-loaded components for optimal initial bundle and performance
 const LoginScreen = lazy(() => import('./components/LoginScreen'));
 const ArchiveTable = lazy(() => import('./components/ArchiveTable'));
+// Only needed after sign-in: kept out of the first download for the landing page
+const TrackerTable = lazy(() => import('./components/TrackerTable'));
+const AppModals = lazy(() => import('./components/AppModals'));
 const LandingPage = lazy(() => import('./components/LandingPage'));
 const SuperAdminPanel = lazy(() => import('./components/SuperAdminPanel'));
 const ChangeHistoryModal = lazy(() => import('./components/ChangeHistoryModal'));
@@ -188,8 +189,8 @@ export default function App() {
     // Free the "one active device" slot so this account can sign in elsewhere
     if (auth?.email) {
       const email = auth.email;
-      Promise.all([import('./services/masterAuthService'), import('./services/deviceSession')])
-        .then(([m, d]) => m.tenantSessionPing('logout', email, d.getDeviceSessionId()))
+      import('./services/masterAuthService')
+        .then(m => m.tenantSessionPing('logout', email, getDeviceSessionId()))
         .catch(() => {});
     }
     sessionStorage.removeItem(SESSION_AUTH_KEY);
@@ -339,8 +340,8 @@ export default function App() {
     const beat = async () => {
       if (cancelled || document.visibilityState === 'hidden') return;
       try {
-        const [m, d] = await Promise.all([import('./services/masterAuthService'), import('./services/deviceSession')]);
-        const res = await m.tenantSessionPing('heartbeat', email, d.getDeviceSessionId());
+        const m = await import('./services/masterAuthService');
+        const res = await m.tenantSessionPing('heartbeat', email, getDeviceSessionId());
         if (cancelled || res.active !== false) return; // null = offline: keep working
         handleLogout();
         addToast(res.reason === 'suspended'
@@ -986,14 +987,19 @@ export default function App() {
 
   // Download PDF Report in Horizontal Landscape Format (Full Account Details, Logo & Cash Reconciliation)
   const handleDownloadPDF = () => {
-    generatePdfReport({
-      weeks,
-      customers,
-      weeklyReconciliation,
-      reconciliationComputed,
-      setIsGeneratingPDF,
-      addToast
-    });
+    import('./utils/generatePdfReport')
+      .then(({ generatePdfReport }) => generatePdfReport({
+        weeks,
+        customers,
+        weeklyReconciliation,
+        reconciliationComputed,
+        setIsGeneratingPDF,
+        addToast
+      }))
+      .catch(err => {
+        setIsGeneratingPDF(false);
+        addToast(`Couldn't create the PDF: ${err?.message || err}`, 'error');
+      });
   };
 
   // Export complete tracker records and financial reconciliation to CSV (Excel compatible with full Telugu support)
@@ -1144,6 +1150,7 @@ export default function App() {
       {/* 4. Tab Views (a crash here keeps the header and saved data usable) */}
       <ErrorBoundary variant="section" key={activeTab}>
         {activeTab === 'tracker' ? (
+          <Suspense fallback={<TableSkeleton />}>
           <TrackerTable
             weeks={weeks}
             customers={filteredCustomers}
@@ -1160,6 +1167,7 @@ export default function App() {
             onUpdateWeekOneDate={handleUpdateWeekOneDate}
             language={language}
           />
+          </Suspense>
         ) : (
           <Suspense fallback={<TableSkeleton />}>
             <ArchiveTable
@@ -1172,6 +1180,7 @@ export default function App() {
       </ErrorBoundary>
 
       {/* 5. Modals & Dialogs */}
+      <Suspense fallback={null}>
       <AppModals
         isAddCustomerOpen={isAddCustomerOpen}
         setIsAddCustomerOpen={setIsAddCustomerOpen}
@@ -1202,6 +1211,7 @@ export default function App() {
         customers={customers}
         handleConfirmDeleteCustomer={handleConfirmDeleteCustomer}
       />
+      </Suspense>
 
       {isHistoryOpen && (
         <Suspense fallback={null}>

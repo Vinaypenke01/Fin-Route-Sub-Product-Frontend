@@ -10,6 +10,7 @@ import update001 from '../../supabase/tenant_updates/001_schema_version.sql?raw'
 import update002 from '../../supabase/tenant_updates/002_session_control.sql?raw';
 import update003 from '../../supabase/tenant_updates/003_change_log.sql?raw';
 import update004 from '../../supabase/tenant_updates/004_database_size.sql?raw';
+import update005 from '../../supabase/tenant_updates/005_row_order.sql?raw';
 
 export const TENANT_UPDATES = [
   {
@@ -39,6 +40,13 @@ export const TENANT_UPDATES = [
     title: 'Database size reporting',
     summary: 'Shows how full this database is in the Tenants Directory, with a warning before the free-tier limit is reached.',
     sql: update004,
+  },
+  {
+    version: 5,
+    file: 'supabase/tenant_updates/005_row_order.sql',
+    title: 'Faster route reordering',
+    summary: 'Saves the route order in one request instead of one per customer (much faster on mobile data).',
+    sql: update005,
   },
 ];
 

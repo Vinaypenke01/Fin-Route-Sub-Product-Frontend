@@ -493,6 +493,14 @@ export async function deleteTenantWeek(client, weekId) {
  */
 export async function updateTenantRowOrder(client, orderedIds = []) {
   if (!client || !orderedIds.length) return;
+
+  // One request for the whole route (tenant update 005)
+  const { error: rpcError } = await client.rpc('finroute_set_row_order', { p_ids: orderedIds });
+  if (!rpcError) return;
+  const missing = rpcError.code === 'PGRST202' || rpcError.code === '42883' || /could not find the function|does not exist/i.test(rpcError.message || '');
+  if (!missing) throw rpcError;
+
+  // Older tenant databases: one request per customer
   const results = await Promise.all(orderedIds.map((id, index) => (
     client.from('customers').update({ row_order: index + 1 }).eq('id', id)
   )));
