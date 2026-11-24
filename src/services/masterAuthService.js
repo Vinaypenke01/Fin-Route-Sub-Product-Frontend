@@ -469,6 +469,43 @@ export async function endTenantSession(tenantId) {
   }
 }
 
+/** Super-Admin: backup runs for one tenant (newest first). */
+export async function listTenantBackups(tenantId) {
+  try {
+    const res = await invokeAdminEdgeFunction('admin-tenants', 'list_backups', { tenantId });
+    return res?.success ? { success: true, runs: res.runs || [] } : { success: false, message: res?.message, runs: [] };
+  } catch (err) {
+    return { success: false, message: await edgeErrorMessage(err, 'Could not load backups.'), runs: [] };
+  }
+}
+
+/** Super-Admin: a 5-minute download link for one backup file. */
+export async function getBackupDownloadUrl(tenantId, path) {
+  try {
+    const res = await invokeAdminEdgeFunction('admin-tenants', 'backup_download_url', { tenantId, path });
+    return res?.success ? { success: true, url: res.url } : { success: false, message: res?.message };
+  } catch (err) {
+    return { success: false, message: await edgeErrorMessage(err, 'Could not create a download link.') };
+  }
+}
+
+/** Super-Admin: back up one tenant right now. */
+export async function runTenantBackup(tenantId) {
+  try {
+    const { data: { session } } = await masterSupabase.auth.getSession();
+    const { data, error } = await masterSupabase.functions.invoke('tenant-backup', {
+      body: { tenantId },
+      headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+    });
+    if (error) return { success: false, message: await edgeErrorMessage(error, 'Backup failed.') };
+    const r = (data?.results || [])[0];
+    if (r?.status === 'success') return { success: true, message: 'Backup saved.' };
+    return { success: false, message: r?.error || data?.message || 'Backup failed.' };
+  } catch (err) {
+    return { success: false, message: err?.message || 'Backup failed.' };
+  }
+}
+
 /**
  * Operator: keep this device's session alive / release it on logout.
  * Returns { active: boolean | null } (null = couldn't reach the server).

@@ -402,6 +402,40 @@ serve(withCors(async (req: Request) => {
       }
 
       // ------------------------------------------------------------------------
+      // 4a3. BACKUPS: list runs and create short-lived download links
+      // ------------------------------------------------------------------------
+      case 'list_backups': {
+        const tenantId = String(payload.tenantId || '').trim();
+        if (!tenantId) return errorResponse('tenantId is required.', 400);
+        const { data, error } = await serviceClient
+          .from('master_backup_runs')
+          .select('id, status, file_path, size_bytes, row_counts, error, trigger, created_at')
+          .eq('tenant_id', tenantId)
+          .order('created_at', { ascending: false })
+          .limit(60);
+        if (error) throw error;
+
+        // Mark which files still exist (older ones are removed by retention)
+        const { data: files } = await serviceClient.storage.from('tenant-backups').list(tenantId, { limit: 1000 });
+        const existing = new Set((files || []).map((f: { name: string }) => `${tenantId}/${f.name}`));
+        const runs = (data || []).map((r: any) => ({ ...r, available: Boolean(r.file_path && existing.has(r.file_path)) }));
+        return jsonResponse({ success: true, runs });
+      }
+
+      case 'backup_download_url': {
+        const tenantId = String(payload.tenantId || '').trim();
+        const path = String(payload.path || '').trim();
+        // Only files inside this tenant's own folder, no path tricks
+        if (!tenantId || !path.startsWith(`${tenantId}/`) || path.includes('..')) {
+          return errorResponse('Invalid backup file.', 400);
+        }
+        const { data, error } = await serviceClient.storage.from('tenant-backups').createSignedUrl(path, 300, { download: true });
+        if (error) throw error;
+        console.log(`Backup download link created by ${callerUser.email}: ${path}`);
+        return jsonResponse({ success: true, url: data?.signedUrl });
+      }
+
+      // ------------------------------------------------------------------------
       // 4b. DELETE TENANT (master registry only; tenant project is untouched)
       // ------------------------------------------------------------------------
       case 'delete_tenant': {

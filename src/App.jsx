@@ -238,6 +238,7 @@ export default function App() {
   const [isAddWeekOpen, setIsAddWeekOpen] = useState(false);
   const [isArchiveOpen, setIsArchiveOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isDownloadingBackup, setIsDownloadingBackup] = useState(false);
   const [isRenewModalOpen, setIsRenewModalOpen] = useState(false);
   const [renewTargetCustomer, setRenewTargetCustomer] = useState(null);
   const [villageContext, setVillageContext] = useState(null);
@@ -955,6 +956,27 @@ export default function App() {
     addToast(`Archived ${toArchive.length} loans.`, 'success');
   };
 
+  // Download a complete copy of the tenant's data (same format as server backups)
+  const handleDownloadBackup = async () => {
+    if (!tenantClient || isDownloadingBackup) return;
+    const waiting = outbox.getPendingCount();
+    if (waiting > 0) {
+      addToast(`${waiting} change(s) haven't reached the server yet, so this copy won't include them. Try again once they're saved.`, 'warning');
+    }
+    setIsDownloadingBackup(true);
+    try {
+      const { downloadTenantBackup } = await import('./utils/downloadBackup');
+      const { rowCounts } = await downloadTenantBackup(tenantClient, {
+        email: auth?.email, businessName: auth?.businessName, clientName: auth?.clientName
+      });
+      addToast(`Downloaded your data (${rowCounts.customers || 0} customers, ${rowCounts.payments || 0} payments). Keep the file somewhere safe.`, 'success');
+    } catch (err) {
+      addToast(`Couldn't download your data: ${err?.message || err}`, 'error');
+    } finally {
+      setIsDownloadingBackup(false);
+    }
+  };
+
   // Download PDF Report in Horizontal Landscape Format (Full Account Details, Logo & Cash Reconciliation)
   const handleDownloadPDF = () => {
     generatePdfReport({
@@ -1054,6 +1076,8 @@ export default function App() {
         onOpenDeleteWeek={handleOpenDeleteWeek}
         onOpenArchive={() => setIsArchiveOpen(true)}
         onOpenHistory={tenantClient ? () => setIsHistoryOpen(true) : undefined}
+        onDownloadBackup={tenantClient ? handleDownloadBackup : undefined}
+        isDownloadingBackup={isDownloadingBackup}
         onDownloadPDF={handleDownloadPDF}
         isGeneratingPDF={isGeneratingPDF}
         onExportCSV={handleExportCSV}

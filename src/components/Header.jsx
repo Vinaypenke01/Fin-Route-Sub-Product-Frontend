@@ -1,5 +1,5 @@
 import React from 'react';
-import { UserPlus, CalendarPlus, CalendarMinus, Archive, FileDown, LogOut, Loader2, FileSpreadsheet, History } from 'lucide-react';
+import { UserPlus, CalendarPlus, CalendarMinus, Archive, FileDown, LogOut, Loader2, FileSpreadsheet, History, DatabaseBackup } from 'lucide-react';
 import { t, AVAILABLE_LANGUAGES } from '../utils/translations';
 
 export default function Header({
@@ -10,6 +10,8 @@ export default function Header({
   onOpenDeleteWeek,
   onOpenArchive,
   onOpenHistory,
+  onDownloadBackup,
+  isDownloadingBackup = false,
   onDownloadPDF,
   isGeneratingPDF = false,
   onExportCSV,
@@ -164,6 +166,18 @@ export default function Header({
             >
               <History className="w-3.5 h-3.5 text-indigo-600" />
               <span>{language === 'te' ? 'చరిత్ర' : 'History'}</span>
+            </button>
+          )}
+
+          {onDownloadBackup && (
+            <button
+              onClick={onDownloadBackup}
+              disabled={isDownloadingBackup}
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+              title="Download a complete copy of your ledger (all tables) to keep safe"
+            >
+              {isDownloadingBackup ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <DatabaseBackup className="w-3.5 h-3.5 text-slate-600" />}
+              <span>{language === 'te' ? 'బ్యాకప్' : 'My data'}</span>
             </button>
           )}
 

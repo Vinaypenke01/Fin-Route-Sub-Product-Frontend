@@ -1,4 +1,5 @@
 import React from 'react';
+import TenantBackupsPanel from './TenantBackupsPanel';
 import {
   Building,
   Pencil,
@@ -256,6 +257,9 @@ export default function SuperAdminModals({
                       })()}
                     </div>
                   </div>
+
+                  {/* Backups (nightly + manual) */}
+                  <TenantBackupsPanel key={viewingTenant.id} tenant={viewingTenant} />
 
                   {/* Real-time DB Health & Statistics */}
                   <div>

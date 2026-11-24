@@ -214,9 +214,12 @@ const MASTER_MIGRATIONS = [
   'supabase/migrations/20261124_tenant_auth.sql',
   'supabase/migrations/20261125_tenant_delete.sql',
   'supabase/migrations/20261126_active_sessions.sql',
+  'supabase/migrations/20261127_backups.sql',
 ];
 
-const DEPLOY_FUNCTIONS_CMD = `npx supabase functions deploy tenant-login tenant-session admin-tenants keep-alive super-admin-login --project-ref ${MASTER_REF}`;
+const DEPLOY_FUNCTIONS_CMD = `npx supabase functions deploy tenant-login tenant-session tenant-backup admin-tenants keep-alive super-admin-login --project-ref ${MASTER_REF}`;
+const BACKUP_SECRET_GEN_CMD = `$s = [guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N'); $s`;
+const BACKUP_SECRET_SET_CMD = `npx supabase secrets set --project-ref ${MASTER_REF} BACKUP_CRON_SECRET=PASTE_THE_VALUE_HERE`;
 const ALLOWED_ORIGINS_CMD = `npx supabase secrets set --project-ref ${MASTER_REF} "ALLOWED_ORIGINS=${SITE_URL},http://localhost:5173,https://*--sub-project001.netlify.app"`;
 
 function parseProjectRef(url) {
@@ -554,6 +557,10 @@ export default function TenantSetupGuide({ onOpenAddTenant }) {
         </ol>
         <p>Allowed websites for the server functions (run in PowerShell from the project folder):</p>
         <CodeBlock code={ALLOWED_ORIGINS_CMD} title="Set ALLOWED_ORIGINS" language="powershell" />
+        <p>Nightly backups: create one long random value, store it in Supabase <b>and</b> as the GitHub repository secret <code className="font-mono">BACKUP_CRON_SECRET</code> (GitHub → Settings → Secrets and variables → Actions):</p>
+        <CodeBlock code={BACKUP_SECRET_GEN_CMD} title="1. Generate a random value (PowerShell)" language="powershell" />
+        <CodeBlock code={BACKUP_SECRET_SET_CMD} title="2. Save it in Supabase" language="powershell" />
+        <p>Restoring a backup: see <code className="font-mono">docs/RESTORE_BACKUP.md</code> (dry run first, then <code className="font-mono">--apply</code>).</p>
         <p>Deploy the server functions after any change to them:</p>
         <CodeBlock code={DEPLOY_FUNCTIONS_CMD} title="Deploy Edge Functions" language="powershell" />
         <Callout type="info">
